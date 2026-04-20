@@ -186,6 +186,15 @@ function _buildSettingsPanel() {
             <option value="geoInterruptedSinuMollweide">Interrupted Sinu-Mollweide</option>
             <option value="geoInterruptedBoggs">Interrupted Boggs</option>
           </optgroup>
+          <optgroup label="Polyhedral">
+            <option value="geoPolyhedralButterfly">Polyhedral Butterfly</option>
+            <option value="geoPolyhedralCollignon">Polyhedral Collignon</option>
+            <option value="geoPolyhedralWaterman">Polyhedral Waterman</option>
+          </optgroup>
+          <optgroup label="Quincuncial">
+            <option value="geoGringortenQuincuncial">Gringorten Quincuncial</option>
+            <option value="geoPeirceQuincuncial">Peirce Quincuncial</option>
+          </optgroup>
         </select>
       </div>
       <div class="sx-setting-row">
@@ -381,6 +390,9 @@ function _buildAppToolbar() {
       <button id="btn-reset-zoom" class="btn btn-sm btn-outline-secondary" title="Reset zoom">
         <i class="bi bi-fullscreen"></i>
       </button>
+      <button id="btn-reset-orientation" class="btn btn-sm btn-outline-secondary" title="Reset map orientation">
+        <i class="bi bi-compass"></i>
+      </button>
       <div class="pt-toolbar-sep"></div>
       <button id="btn-settings" class="btn btn-sm btn-outline-secondary" title="Layer settings panel">
         <i class="bi bi-caret-left me-1"></i><i class="bi bi-gear"></i>
@@ -437,6 +449,43 @@ function _buildAppModals() {
       </div>
       <div class="pt-modal-error" id="modal-error" style="display:none"></div>`,
   }) + '\n' + buildStandardDialogsHTML() + '\n' +
+  buildModalHTML({
+    overlayId: 'tree-map-overlay',
+    title: 'Tree Annotation Mapping',
+    icon: 'diagram-3',
+    closeId: 'btn-tree-map-close',
+    bodyId: 'tree-map-body',
+    body: `
+      <p id="tree-map-summary" class="text-muted" style="font-size:0.85rem;margin-bottom:0.75rem"></p>
+      <div class="sx-setting-row">
+        <label for="tree-map-lat">Latitude field</label>
+        <select id="tree-map-lat" class="form-select form-select-sm"></select>
+      </div>
+      <div class="sx-setting-row">
+        <label for="tree-map-lon">Longitude field</label>
+        <select id="tree-map-lon" class="form-select form-select-sm"></select>
+      </div>
+      <div class="sx-setting-row">
+        <label for="tree-map-hpd">95% HPD / shape field</label>
+        <select id="tree-map-hpd" class="form-select form-select-sm"></select>
+      </div>
+      <hr style="opacity:0.2">
+      <div class="sx-setting-row">
+        <label for="tree-map-location">Reconstructed location field</label>
+        <select id="tree-map-location" class="form-select form-select-sm"></select>
+      </div>
+      <div class="sx-setting-row">
+        <label for="tree-map-posterior">Posterior density vector field</label>
+        <select id="tree-map-posterior" class="form-select form-select-sm"></select>
+      </div>
+      <p class="text-secondary" style="font-size:0.8rem;margin:0.6rem 0 0">
+        Tip: choose "None" for fields not present in your tree annotations.
+      </p>`,
+    footerId: 'tree-map-footer',
+    footer: `
+      <button class="btn btn-sm btn-outline-secondary" id="btn-tree-map-cancel">Cancel</button>
+      <button class="btn btn-sm btn-primary" id="btn-tree-map-continue">Continue Import</button>`,
+  }) + '\n' +
   buildModalHTML({
     overlayId: 'export-graphic-overlay',
     title: 'Export Graphic',

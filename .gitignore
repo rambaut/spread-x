@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .DS_Store
+data/maps/
+spread-x/data/maps/
 .idea/
 .vscode/*
 !.vscode/tasks.json

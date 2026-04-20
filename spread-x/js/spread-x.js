@@ -9,8 +9,14 @@ import { downloadBlob, wireDropZone } from '@artic-network/pearcore/utils.js';
 import { createCommands } from '@artic-network/pearcore/commands.js';
 import { createGraphicsExporter } from '@artic-network/pearcore/graphics-export.js';
 import { loadSettings, saveSettings as _saveSettings } from '@artic-network/pearcore/pearcore-app.js';
+import { analyzeTreeAnnotations, parseTreeData } from '@artic-network/pearcore/tree-io.js';
 import { createLayer, duplicateLayer, LAYER_TYPES, LAYER_ICONS } from './layers.js';
-import { detectFileType, parseGeoData, parseCSV, pointFields } from './parsers.js';
+import {
+  detectFileType,
+  parseGeoData,
+  parseCSV,
+  pointFields,
+} from './parsers.js';
 import { createMapRenderer } from './map-renderer.js';
 
 // ── Command definitions ──────────────────────────────────────────────────
@@ -76,6 +82,15 @@ export async function app(opts = {}) {
     const wrapper = $('canvas-wrapper');
     if (!wrapper) return;
     renderer.resize(wrapper.clientWidth, wrapper.clientHeight);
+  }
+  let _renderQueued = false;
+  function _queueRender() {
+    if (_renderQueued) return;
+    _renderQueued = true;
+    requestAnimationFrame(() => {
+      _renderQueued = false;
+      _render();
+    });
   }
   window.addEventListener('resize', () => { _resize(); _render(); });
 
@@ -396,6 +411,7 @@ export async function app(opts = {}) {
 
   // ── Import modal ─────────────────────────────────────────────────────
   const importOverlay = $('import-file-overlay');
+  const treeMapOverlay = $('tree-map-overlay');
   let _importType = 'auto';
 
   function _openImportModal(type) {
@@ -422,16 +438,123 @@ export async function app(opts = {}) {
   const canvasWrapper = $('canvas-wrapper');
   if (canvasWrapper) wireDropZone(canvasWrapper, file => { if (file) _importFile(file); }, { checkContains: true });
 
+  // Space + drag pans the projection center (lon/lat), not the zoom transform.
+  let _spaceHeld = false;
+  let _projectionDragging = false;
+  let _lastDragX = 0;
+  let _lastDragY = 0;
+  const statusStats = $('status-stats');
+  let _statusBeforeSpaceHint = '';
+
+  function _getBasemapCenter() {
+    return layers.find(l => l.type === LAYER_TYPES.BASEMAP)?.style?.center || [0, 0];
+  }
+
+  function _formatCoord(v, posLabel, negLabel) {
+    const abs = Math.abs(Number(v) || 0).toFixed(2);
+    return `${abs}${v >= 0 ? posLabel : negLabel}`;
+  }
+
+  function _setSpaceHint(lonOnly = false) {
+    if (!statusStats) return;
+    const [lon, lat] = _getBasemapCenter();
+    statusStats.textContent = `Space-drag${lonOnly ? ' (lon only)' : ''}: center ${_formatCoord(lat, 'N', 'S')} ${_formatCoord(lon, 'E', 'W')}`;
+  }
+
+  function _restoreStatusAfterSpaceHint() {
+    if (!statusStats) return;
+    statusStats.textContent = _statusBeforeSpaceHint || '';
+  }
+
+  function _isEditableTarget(el) {
+    if (!el) return false;
+    if (el.isContentEditable) return true;
+    const tag = el.tagName?.toLowerCase();
+    return tag === 'input' || tag === 'textarea' || tag === 'select';
+  }
+
+  window.addEventListener('keydown', e => {
+    if (e.code !== 'Space') return;
+    if (_isEditableTarget(e.target)) return;
+    if (!_spaceHeld) {
+      _statusBeforeSpaceHint = statusStats?.textContent || '';
+    }
+    e.preventDefault();
+    _spaceHeld = true;
+    renderer.setSpacePanActive(true);
+    _setSpaceHint();
+  });
+
+  window.addEventListener('keyup', e => {
+    if (e.code !== 'Space') return;
+    _spaceHeld = false;
+    _projectionDragging = false;
+    renderer.setSpacePanActive(false);
+    _restoreStatusAfterSpaceHint();
+    _saveState();
+  });
+
+  canvasWrapper?.addEventListener('pointerdown', e => {
+    if (!_spaceHeld) return;
+    _projectionDragging = true;
+    _lastDragX = e.clientX;
+    _lastDragY = e.clientY;
+    canvasWrapper.setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  canvasWrapper?.addEventListener('pointermove', e => {
+    if (!_projectionDragging) return;
+    const dx = e.clientX - _lastDragX;
+    const dy = e.clientY - _lastDragY;
+    _lastDragX = e.clientX;
+    _lastDragY = e.clientY;
+
+    const lonOnly = e.shiftKey;
+    const moved = lonOnly
+      ? renderer.panProjectionLongitudeByPixels(dx)
+      : renderer.panProjectionByPixels(dx, dy);
+
+    if (moved) {
+      _setSpaceHint(lonOnly);
+      _queueRender();
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  const _endProjectionDrag = e => {
+    if (!_projectionDragging) return;
+    _projectionDragging = false;
+    _saveState();
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+  };
+
+  canvasWrapper?.addEventListener('pointerup', _endProjectionDrag);
+  canvasWrapper?.addEventListener('pointercancel', _endProjectionDrag);
+  canvasWrapper?.addEventListener('pointerleave', e => {
+    if (_projectionDragging && !_spaceHeld) _endProjectionDrag(e);
+  });
+
   // ── File import logic ────────────────────────────────────────────────
 
   function _importFile(file) {
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => _processImport(reader.result, file.name);
+    reader.onload = () => {
+      _processImport(reader.result, file.name)
+        .catch(err => {
+          console.error('Import failed:', err);
+          $('status-stats').textContent = `Import failed: ${file.name}`;
+        });
+    };
     reader.readAsText(file);
   }
 
-  function _processImport(text, filename) {
+  async function _processImport(text, filename) {
     const forced = $('import-layer-type')?.value || _importType;
     const detected = detectFileType(text, filename);
     let layerType, data;
@@ -467,9 +590,28 @@ export async function app(opts = {}) {
         data = detected.type === 'csv' ? parseCSV(detected.data) :
                Array.isArray(detected.data) ? detected.data : parseCSV(text);
         break;
-      case LAYER_TYPES.TREE:
-        data = detected.data; // raw text — tree parser TBD
+      case LAYER_TYPES.TREE: {
+        const analysis = analyzeTreeAnnotations(detected.data);
+        let mapping = {
+          longitudeKey: analysis.suggested.longitudeKey || '',
+          latitudeKey: analysis.suggested.latitudeKey || '',
+          hpdKey: analysis.suggested.hpdKey || '',
+          locationKey: analysis.suggested.locationKey || '',
+          posteriorKey: analysis.suggested.posteriorKey || '',
+        };
+
+        if (analysis.hasBeastAnnotations) {
+          const chosen = await _openTreeMappingDialog(analysis);
+          if (!chosen) {
+            $('status-stats').textContent = `Import cancelled: ${filename}`;
+            return;
+          }
+          mapping = chosen;
+        }
+
+        data = parseTreeData(detected.data, mapping);
         break;
+      }
       default:
         data = detected.data;
     }
@@ -484,7 +626,93 @@ export async function app(opts = {}) {
     _render();
     _saveState();
 
-    $('status-stats').textContent = `Imported: ${filename}`;
+    if (layerType === LAYER_TYPES.TREE && data?.metadata) {
+      $('status-stats').textContent = `Imported: ${filename} (${data.metadata.nodeCount} nodes, ${data.metadata.branchCount} branches)`;
+    } else {
+      $('status-stats').textContent = `Imported: ${filename}`;
+    }
+  }
+
+  async function _openTreeMappingDialog(analysis) {
+    if (!treeMapOverlay) return null;
+
+    const summary = $('tree-map-summary');
+    const lonSel = $('tree-map-lon');
+    const latSel = $('tree-map-lat');
+    const hpdSel = $('tree-map-hpd');
+    const locSel = $('tree-map-location');
+    const postSel = $('tree-map-posterior');
+    const btnClose = $('btn-tree-map-close');
+    const btnCancel = $('btn-tree-map-cancel');
+    const btnContinue = $('btn-tree-map-continue');
+
+    if (!lonSel || !latSel || !hpdSel || !locSel || !postSel || !btnContinue) {
+      return null;
+    }
+
+    const keys = analysis.annotationKeys || [];
+    const options = [''].concat(keys);
+    const defaultLat = keys.includes('location1')
+      ? 'location1'
+      : (analysis.suggested.latitudeKey || '');
+    const defaultLon = keys.includes('location2')
+      ? 'location2'
+      : (analysis.suggested.longitudeKey || '');
+
+    const fillSelect = (sel, selected, labelForNone = 'None') => {
+      sel.innerHTML = '';
+      for (const k of options) {
+        const opt = document.createElement('option');
+        opt.value = k;
+        opt.textContent = k || labelForNone;
+        if (k === selected) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    };
+
+    fillSelect(latSel, defaultLat);
+    fillSelect(lonSel, defaultLon);
+    fillSelect(hpdSel, analysis.suggested.hpdKey || '');
+    fillSelect(locSel, analysis.suggested.locationKey || '');
+    fillSelect(postSel, analysis.suggested.posteriorKey || '');
+
+    if (summary) {
+      const mode = analysis.likelyContinuous && analysis.likelyDiscrete
+        ? 'continuous + discrete'
+        : analysis.likelyContinuous
+          ? 'continuous'
+          : analysis.likelyDiscrete
+            ? 'discrete'
+            : 'unknown';
+      summary.textContent = `Detected ${keys.length} annotation fields (${mode} phylogeography likely).`;
+    }
+
+    treeMapOverlay.classList.add('open');
+
+    return new Promise(resolve => {
+      const finish = (result) => {
+        treeMapOverlay.classList.remove('open');
+        btnContinue.removeEventListener('click', onContinue);
+        btnCancel?.removeEventListener('click', onCancel);
+        btnClose?.removeEventListener('click', onCancel);
+        resolve(result);
+      };
+
+      const onCancel = () => finish(null);
+      const onContinue = () => {
+        finish({
+          longitudeKey: lonSel.value,
+          latitudeKey: latSel.value,
+          hpdKey: hpdSel.value,
+          locationKey: locSel.value,
+          posteriorKey: postSel.value,
+        });
+      };
+
+      btnContinue.addEventListener('click', onContinue);
+      btnCancel?.addEventListener('click', onCancel);
+      btnClose?.addEventListener('click', onCancel);
+    });
   }
 
   // ── Commands ─────────────────────────────────────────────────────────
@@ -498,6 +726,14 @@ export async function app(opts = {}) {
       }
     }
     if (e.key === 'Escape') {
+      if (treeMapOverlay?.classList.contains('open')) {
+        $('btn-tree-map-cancel')?.click();
+        return;
+      }
+      _projectionDragging = false;
+      _spaceHeld = false;
+      renderer.setSpacePanActive(false);
+      _restoreStatusAfterSpaceHint();
       _closeImportModal();
       if (!layerPinned) _closePanel(layerPanel, 'layers-pinned');
       if (!settingsPinned) _closePanel(settingsPanel, 'settings-pinned');
@@ -506,6 +742,20 @@ export async function app(opts = {}) {
 
   // Reset zoom button
   $('btn-reset-zoom')?.addEventListener('click', () => renderer.resetZoom());
+  $('btn-reset-orientation')?.addEventListener('click', async () => {
+    const base = layers.find(l => l.type === LAYER_TYPES.BASEMAP);
+    if (!base) return;
+
+    base.style.center = [0, 0];
+    base.style.rotate = [0, 0, 0];
+
+    if (_spaceHeld) _setSpaceHint();
+    else $('status-stats').textContent = 'Map orientation reset';
+
+    if (selectedId === base.id) _showSettingsForLayer(selectedId);
+    await _render();
+    _saveState();
+  });
 
   // ── Graphics export ──────────────────────────────────────────────────
   const exporter = createGraphicsExporter({

@@ -1,9 +1,13 @@
 /**
- * parsers.js — File-format detection and parsing for SPREAD-X.
+ * parsers.js — File-format detection and non-tree parsing for SPREAD-X.
  *
- * Supports: GeoJSON, TopoJSON, CSV/TSV (points), JSON point arrays.
- * Tree (Newick/Nexus) is detected but not fully parsed here.
+ * Tree parsing and annotation inference are delegated to pearcore tree-io.
  */
+
+import {
+  analyzeTreeAnnotations as pearAnalyzeTreeAnnotations,
+  parseTreeData as pearParseTreeData,
+} from '@artic-network/pearcore/tree-io.js';
 
 /**
  * Auto-detect file type from content and optional filename.
@@ -24,7 +28,9 @@ export function detectFileType(text, filename) {
     if (Array.isArray(json) && json.length && _hasLatLon(json[0]))
       return { type: 'points-json', data: json };
     return { type: 'json', data: json };
-  } catch { /* not JSON */ }
+  } catch {
+    // not JSON
+  }
 
   // Newick / Nexus
   if (['nwk', 'newick', 'tre', 'tree', 'nex', 'nexus'].includes(ext) ||
@@ -41,11 +47,7 @@ export function detectFileType(text, filename) {
 }
 
 /**
- * Convert a TopoJSON or GeoJSON string/object into a GeoJSON
- * FeatureCollection suitable for a GeoJSON layer.
- *
- * @param {string|object} input - raw text or parsed JSON
- * @param {object} topojson - the topojson-client module
+ * Convert a TopoJSON or GeoJSON string/object into a GeoJSON FeatureCollection.
  */
 export function parseGeoData(input, topojson) {
   const json = typeof input === 'string' ? JSON.parse(input) : input;
@@ -55,18 +57,15 @@ export function parseGeoData(input, topojson) {
     return topojson.feature(json, json.objects[key]);
   }
 
-  // Wrap bare Feature in FeatureCollection
   if (json.type === 'Feature') {
     return { type: 'FeatureCollection', features: [json] };
   }
 
-  return json; // already FeatureCollection or GeometryCollection
+  return json;
 }
 
 /**
  * Parse CSV / TSV text into an array of point objects.
- * Expects a header row with latitude/longitude columns.
- * Numeric values are coerced to numbers automatically.
  */
 export function parseCSV(text) {
   const lines = text.trim().split(/\r?\n/);
@@ -91,24 +90,43 @@ export function parseCSV(text) {
 }
 
 /**
- * Return the field names from a point data array (for label picker).
+ * Return field names from a point data array.
  */
 export function pointFields(data) {
   if (!data?.length) return [];
   return Object.keys(data[0]);
 }
 
-/* ── internal helpers ──────────────────────────────────────────────── */
+/**
+ * Delegated to pearcore tree-io.
+ */
+export function analyzeTreeAnnotations(text) {
+  return pearAnalyzeTreeAnnotations(text);
+}
 
-/** Simple CSV line splitter respecting double-quoted fields. */
+/**
+ * Delegated to pearcore tree-io.
+ */
+export function parseTreeData(text, mapping = {}) {
+  return pearParseTreeData(text, mapping);
+}
+
+/** Simple CSV splitter respecting double-quoted fields. */
 function _splitLine(line, sep) {
   const result = [];
   let cur = '';
   let inQuote = false;
   for (let i = 0; i < line.length; i++) {
     const ch = line[i];
-    if (ch === '"') { inQuote = !inQuote; continue; }
-    if (ch === sep && !inQuote) { result.push(cur); cur = ''; continue; }
+    if (ch === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (ch === sep && !inQuote) {
+      result.push(cur);
+      cur = '';
+      continue;
+    }
     cur += ch;
   }
   result.push(cur);
