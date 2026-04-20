@@ -1,0 +1,12 @@
+{
+  "name": "spread-x",
+  "version": "0.1.0",
+  "description": "SPREAD-X — Built on the pearcore framework",
+  "private": true,
+  "workspaces": [
+    "pearcore",
+    "spread-x"
+  ],
+  "devDependencies": {
+  }
+}
