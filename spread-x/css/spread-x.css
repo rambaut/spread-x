@@ -1,6 +1,199 @@
-/* spread-x.css — App-specific styles. */
+/* spread-x.css — SPREAD-X app-specific styles. */
 
-/* ── Canvas container ──────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════
+   Side panels (left = layers, right = settings)
+   ══════════════════════════════════════════════════════════════════════ */
+
+.sx-side-panel {
+  position: fixed;
+  top: var(--pt-toolbar-h, 0px);
+  bottom: var(--pt-statusbar-h, 28px);
+  background: var(--pt-bg-panel);
+  z-index: 600;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.22s cubic-bezier(.4,0,.2,1),
+              box-shadow 0.22s cubic-bezier(.4,0,.2,1);
+  overflow: hidden;
+}
+
+/* ── Left panel (layers) ───────────────────────────────────────────── */
+
+.sx-panel-left {
+  left: 0; width: 220px;
+  border-right: 1px solid var(--pt-divider);
+  transform: translateX(-100%);
+}
+.sx-panel-left.open   { transform: translateX(0); box-shadow: 4px 0 24px var(--pt-shadow-popup); }
+.sx-panel-left.pinned { transform: translateX(0); box-shadow: none; }
+
+/* ── Right panel (settings) ────────────────────────────────────────── */
+
+.sx-panel-right {
+  right: 0; width: 260px;
+  border-left: 1px solid var(--pt-divider);
+  transform: translateX(100%);
+}
+.sx-panel-right.open   { transform: translateX(0); box-shadow: -4px 0 24px var(--pt-shadow-popup); }
+.sx-panel-right.pinned { transform: translateX(0); box-shadow: none; }
+
+/* ── Body margin when panels are pinned ────────────────────────────── */
+
+.layers-pinned #canvas-container   { margin-left:  220px; }
+.settings-pinned #canvas-container { margin-right: 260px; }
+
+/* ── Panel header ──────────────────────────────────────────────────── */
+
+.sx-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 8px 8px 14px;
+  border-bottom: 1px solid var(--pt-divider);
+  flex-shrink: 0;
+}
+.sx-panel-header h2 {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--pt-red);
+  margin: 0;
+  letter-spacing: 0.3px;
+}
+.sx-panel-btns { display: flex; align-items: center; gap: 0; }
+.sx-panel-btns button {
+  background: none; border: none; color: var(--pt-off-white);
+  line-height: 1; padding: 2px 6px; border-radius: 3px;
+  opacity: 0.5; cursor: pointer;
+}
+.sx-panel-btns button:hover { background: var(--pt-surface-hover); opacity: 1; }
+.sx-panel-btns button.active { color: var(--pt-primary); opacity: 1; }
+
+/* ── Panel body ────────────────────────────────────────────────────── */
+
+.sx-panel-body {
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+  padding: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Layer list
+   ══════════════════════════════════════════════════════════════════════ */
+
+.sx-layer-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.sx-layer-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--pt-divider, rgba(255,255,255,0.08));
+  font-size: 0.78rem;
+  user-select: none;
+  transition: background 0.1s;
+}
+.sx-layer-item:hover { background: var(--pt-surface-hover); }
+.sx-layer-item.selected {
+  background: var(--pt-surface-active, rgba(255,255,255,0.1));
+  border-left: 3px solid var(--pt-primary, #2aa198);
+  padding-left: 7px;
+}
+
+.sx-layer-vis {
+  background: none; border: none; padding: 2px; cursor: pointer;
+  color: var(--pt-text); opacity: 0.6; font-size: 0.82rem;
+  flex-shrink: 0;
+}
+.sx-layer-vis:hover { opacity: 1; }
+.sx-layer-vis.off { opacity: 0.25; }
+
+.sx-layer-icon { font-size: 0.82rem; opacity: 0.5; flex-shrink: 0; }
+.sx-layer-name {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--pt-text);
+}
+
+/* ── Layer controls (bottom of layer panel) ────────────────────────── */
+
+.sx-layer-controls {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  border-top: 1px solid var(--pt-divider);
+  flex-shrink: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Settings panel content
+   ══════════════════════════════════════════════════════════════════════ */
+
+.sx-settings-placeholder {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 0.8rem;
+}
+
+.sx-settings-section {
+  padding: 10px 14px 14px;
+}
+.sx-settings-section h3 {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--pt-teal);
+  margin: 0 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sx-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 0.76rem;
+}
+.sx-setting-row label {
+  color: var(--pt-text-muted, rgba(255,255,255,0.6));
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.sx-setting-input {
+  max-width: 120px;
+}
+.sx-setting-row .form-range {
+  flex: 1;
+  min-width: 60px;
+}
+.sx-setting-row .form-select {
+  flex: 1;
+  min-width: 0;
+}
+.sx-setting-row .form-control {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Map container & SVG
+   ══════════════════════════════════════════════════════════════════════ */
+
+#canvas-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  transition: margin 0.22s cubic-bezier(.4,0,.2,1);
+}
 
 #canvas-wrapper {
   position: relative;
@@ -8,41 +201,61 @@
   overflow: hidden;
 }
 
-#app-canvas {
+#map-svg {
   display: block;
   width: 100%;
   height: 100%;
+  cursor: grab;
 }
+#map-svg:active { cursor: grabbing; }
 
-/* ── Empty state ───────────────────────────────────────────────────────── */
-
-#empty-state {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-  z-index: 1;
-}
-#empty-state > div { pointer-events: auto; }
-
-#empty-state .pt-empty-title {
-  font-size: 1.1rem;
-  margin: 0.6rem 0 0.3rem;
-  opacity: 0.7;
-}
-#empty-state .pt-empty-hint {
-  font-size: 0.82rem;
-  opacity: 0.45;
-  margin-bottom: 1rem;
-}
-
-/* ── Toolbar title ─────────────────────────────────────────────────────── */
+/* ── Toolbar extras ────────────────────────────────────────────────── */
 
 #toolbar-title {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 40vw;
+}
+
+/* ── Custom dropdown (add-layer menu) ──────────────────────────────── */
+
+.sx-dropdown {
+  position: relative;
+  display: inline-block;
+}
+.sx-dropdown-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 200px;
+  background: var(--pt-bg-panel);
+  border: 1px solid var(--pt-divider);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px var(--pt-shadow-popup);
+  z-index: 1000;
+  padding: 4px 0;
+  margin-top: 2px;
+}
+.sx-dropdown-menu.show { display: block; }
+
+.sx-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  color: var(--pt-text);
+  cursor: pointer;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+}
+.sx-dropdown-item:hover { background: var(--pt-surface-hover); }
+.sx-dropdown-sep {
+  height: 1px;
+  background: var(--pt-divider);
+  margin: 4px 0;
 }
