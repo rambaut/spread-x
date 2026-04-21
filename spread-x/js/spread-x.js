@@ -9,6 +9,8 @@ import { downloadBlob, wireDropZone } from '@artic-network/pearcore/utils.js';
 import { createCommands } from '@artic-network/pearcore/commands.js';
 import { createGraphicsExporter } from '@artic-network/pearcore/graphics-export.js';
 import { loadSettings, saveSettings as _saveSettings } from '@artic-network/pearcore/pearcore-app.js';
+import { upgradeAllPaletteColourPickers } from '@artic-network/pearcore/colorpicker.js';
+import { CATEGORICAL_PALETTES } from '@artic-network/pearcore/palettes.js';
 import { analyzeTreeAnnotations, parseTreeData } from '@artic-network/pearcore/tree-io.js';
 import { createLayer, duplicateLayer, LAYER_TYPES, LAYER_ICONS } from './layers.js';
 import {
@@ -31,6 +33,7 @@ const COMMAND_DEFS = [
 export async function app(opts = {}) {
   const root = document;
   const $ = id => root.querySelector('#' + id);
+  const statusStats = $('status-stats');
 
   // Wait for D3 + topojson to be available (loaded via CDN in HTML)
   const d3 = window.d3;
@@ -98,10 +101,12 @@ export async function app(opts = {}) {
     _resize();
     renderer.setLayers(layers);
     await renderer.render();
+    _updateSelectedGeoJSONStatus();
   }
 
   // ── Create default base-map layer ────────────────────────────────────
   layers.push(createLayer(LAYER_TYPES.BASEMAP, 'Base Map'));
+  layers.push(createLayer(LAYER_TYPES.FRAME, 'Map Frame'));
   selectedId = layers[0].id;
 
   // Restore saved state (layer styles only — data isn't persisted)
@@ -113,6 +118,7 @@ export async function app(opts = {}) {
     }
     if (saved.selectedId) selectedId = saved.selectedId;
   }
+  _ensureFixedBoundaryLayers();
 
   // ── Layer panel (left) ───────────────────────────────────────────────
   const layerPanel  = $('layer-panel');
@@ -156,6 +162,7 @@ export async function app(opts = {}) {
 
   // Settings panel open/close/pin (right)
   const settingsPanel = $('settings-panel');
+  const settingsPanelBody = $('settings-panel-body');
   const btnSettingsPin = $('btn-settings-pin');
   let settingsPinned = false;
   $('btn-settings')?.addEventListener('click', () => {
@@ -167,17 +174,51 @@ export async function app(opts = {}) {
     settingsPinned ? _pinPanel(settingsPanel, 'settings-pinned', btnSettingsPin) : _unpinPanel(settingsPanel, 'settings-pinned', btnSettingsPin);
   });
 
+  _upgradeSettingsColourPickers();
+  _installSliderReadouts();
+
+  function _upgradeSettingsColourPickers() {
+    if (!settingsPanelBody) return;
+    upgradeAllPaletteColourPickers(settingsPanelBody, { palettes: CATEGORICAL_PALETTES });
+  }
+
+  function _installSliderReadouts() {
+    if (!settingsPanelBody) return;
+    const ranges = settingsPanelBody.querySelectorAll('input.form-range[type="range"]');
+    for (const slider of ranges) {
+      const row = slider.closest('.sx-setting-row');
+      if (!row || row.querySelector('.sx-range-value')) continue;
+      row.classList.add('has-range');
+      const out = document.createElement('span');
+      out.className = 'sx-range-value';
+      row.appendChild(out);
+
+      const update = () => {
+        const stepStr = slider.getAttribute('step') || '';
+        const decimals = (stepStr.includes('.') ? stepStr.split('.')[1].length : 0);
+        const num = Number(slider.value);
+        out.textContent = Number.isFinite(num) ? num.toFixed(Math.min(decimals, 3)) : slider.value;
+      };
+
+      slider.addEventListener('input', update);
+      slider.addEventListener('change', update);
+      update();
+    }
+  }
+
   // ── Layer list rendering ─────────────────────────────────────────────
 
   function _renderLayerList() {
     if (!layerList) return;
     layerList.innerHTML = '';
-    for (const layer of layers) {
+    // Render top-most first: higher stack index appears at top of the table.
+    for (const layer of [...layers].reverse()) {
+      const visLocked = layer.type === LAYER_TYPES.BASEMAP || layer.type === LAYER_TYPES.FRAME;
       const el = document.createElement('div');
       el.className = 'sx-layer-item' + (layer.id === selectedId ? ' selected' : '');
       el.dataset.layerId = layer.id;
       el.innerHTML = `
-        <button class="sx-layer-vis ${layer.visible ? '' : 'off'}" data-vis="${layer.id}" title="Toggle visibility">
+        <button class="sx-layer-vis ${layer.visible ? '' : 'off'} ${visLocked ? 'disabled' : ''}" data-vis="${layer.id}" title="${visLocked ? 'Visibility locked' : 'Toggle visibility'}" ${visLocked ? 'disabled' : ''}>
           <i class="bi ${layer.visible ? 'bi-eye' : 'bi-eye-slash'}"></i>
         </button>
         <i class="bi ${LAYER_ICONS[layer.type] || 'bi-square'} sx-layer-icon"></i>
@@ -187,12 +228,66 @@ export async function app(opts = {}) {
     _updateLayerButtons();
   }
 
+  function _frameIndex() {
+    return layers.findIndex(l => l.type === LAYER_TYPES.FRAME);
+  }
+
+  function _oceansIndex() {
+    return layers.findIndex(l => _isOceansLayer(l));
+  }
+
+  function _baseIndex() {
+    return layers.findIndex(l => l.type === LAYER_TYPES.BASEMAP);
+  }
+
+  function _ensureBaseOnBottom() {
+    const idx = _baseIndex();
+    if (idx <= 0) return;
+    const [base] = layers.splice(idx, 1);
+    layers.unshift(base);
+  }
+
+  function _ensureOceansAboveBase() {
+    const idx = _oceansIndex();
+    if (idx < 0 || idx === 1) return;
+    const [oceans] = layers.splice(idx, 1);
+    layers.splice(1, 0, oceans);
+  }
+
+  function _ensureFrameOnTop() {
+    const idx = _frameIndex();
+    if (idx < 0 || idx === layers.length - 1) return;
+    const [frame] = layers.splice(idx, 1);
+    layers.push(frame);
+  }
+
+  function _ensureFixedBoundaryLayers() {
+    _ensureBaseOnBottom();
+    _ensureOceansAboveBase();
+    _ensureFrameOnTop();
+  }
+
   layerList?.addEventListener('click', e => {
     // Visibility toggle
     const visBtn = e.target.closest('[data-vis]');
     if (visBtn) {
       const layer = layers.find(l => l.id === visBtn.dataset.vis);
-      if (layer) { layer.visible = !layer.visible; _renderLayerList(); _render(); _saveState(); }
+      if (layer) {
+        const visLocked = layer.type === LAYER_TYPES.BASEMAP || layer.type === LAYER_TYPES.FRAME;
+        const nextVisible = visLocked ? true : !layer.visible;
+        const prevVisible = layer.visible;
+        layer.visible = nextVisible;
+
+        let applied = false;
+        if (prevVisible !== nextVisible) {
+          applied = renderer.setLayerVisibility(layer.id, nextVisible);
+        }
+
+        _renderLayerList();
+        if (!applied || nextVisible) _render();
+        _updateSelectedGeoJSONStatus();
+        _saveState();
+      }
       return;
     }
     // Select
@@ -201,46 +296,58 @@ export async function app(opts = {}) {
       selectedId = item.dataset.layerId;
       _renderLayerList();
       _showSettingsForLayer(selectedId);
+      _updateSelectedGeoJSONStatus();
     }
   });
 
   function _updateLayerButtons() {
     const sel = layers.find(l => l.id === selectedId);
-    const isBase = sel?.type === LAYER_TYPES.BASEMAP;
-    $('btn-delete-layer').disabled  = !sel || isBase;
-    $('btn-dup-layer').disabled     = !sel;
+    const isLocked = _isLockedLayer(sel);
+    $('btn-delete-layer').disabled  = !sel || isLocked;
+    $('btn-dup-layer').disabled     = !sel || sel?.type === LAYER_TYPES.FRAME || _isOceansLayer(sel);
     const idx = layers.findIndex(l => l.id === selectedId);
-    $('btn-move-up').disabled   = idx <= 0;
-    $('btn-move-down').disabled = idx < 0 || idx >= layers.length - 1;
+    const minMovableIdx = Math.max(2, _baseIndex() + 2);
+    const maxMovableIdx = Math.max(minMovableIdx, _frameIndex() - 1);
+    $('btn-move-up').disabled   = idx < 0 || isLocked || idx >= maxMovableIdx;
+    $('btn-move-down').disabled = idx < 0 || isLocked || idx <= minMovableIdx;
   }
 
   // Layer CRUD buttons
   $('btn-delete-layer')?.addEventListener('click', () => {
     const idx = layers.findIndex(l => l.id === selectedId);
-    if (idx < 0 || layers[idx].type === LAYER_TYPES.BASEMAP) return;
+    if (idx < 0 || _isLockedLayer(layers[idx])) return;
     layers.splice(idx, 1);
+    _ensureFixedBoundaryLayers();
     selectedId = layers[Math.min(idx, layers.length - 1)]?.id || null;
     _renderLayerList(); _showSettingsForLayer(selectedId); _render(); _saveState();
   });
 
   $('btn-dup-layer')?.addEventListener('click', () => {
     const src = layers.find(l => l.id === selectedId);
-    if (!src) return;
+    if (!src || src.type === LAYER_TYPES.FRAME || _isOceansLayer(src)) return;
     const dup = duplicateLayer(src);
     const idx = layers.indexOf(src);
     layers.splice(idx + 1, 0, dup);
+    _ensureFixedBoundaryLayers();
     selectedId = dup.id;
     _renderLayerList(); _showSettingsForLayer(selectedId); _render(); _saveState();
   });
 
-  $('btn-move-up')?.addEventListener('click', () => _moveLayer(-1));
-  $('btn-move-down')?.addEventListener('click', () => _moveLayer(1));
+  $('btn-move-up')?.addEventListener('click', () => _moveLayer(1));
+  $('btn-move-down')?.addEventListener('click', () => _moveLayer(-1));
 
   function _moveLayer(dir) {
     const idx = layers.findIndex(l => l.id === selectedId);
+    if (idx < 0 || _isLockedLayer(layers[idx])) return;
+    const minMovableIdx = Math.max(2, _baseIndex() + 2);
+    const frameIdx = _frameIndex();
+    const maxMovableIdx = Math.max(minMovableIdx, frameIdx - 1);
     const to = idx + dir;
-    if (idx < 0 || to < 0 || to >= layers.length) return;
+    if (to < 0 || to >= layers.length) return;
+    if (to < minMovableIdx || to > maxMovableIdx) return;
+    if (dir > 0 && to >= frameIdx) return;
     [layers[idx], layers[to]] = [layers[to], layers[idx]];
+    _ensureFixedBoundaryLayers();
     _renderLayerList(); _render(); _saveState();
   }
 
@@ -265,7 +372,7 @@ export async function app(opts = {}) {
 
   // ── Settings panel wiring ────────────────────────────────────────────
 
-  const SETTINGS_SECTIONS = ['settings-basemap', 'settings-geojson', 'settings-points', 'settings-tree'];
+  const SETTINGS_SECTIONS = ['settings-basemap', 'settings-frame', 'settings-geojson', 'settings-points', 'settings-tree'];
 
   function _showSettingsForLayer(id) {
     const layer = layers.find(l => l.id === id);
@@ -298,26 +405,34 @@ export async function app(opts = {}) {
     const s = layer.style;
     switch (layer.type) {
       case LAYER_TYPES.BASEMAP:
-        $('set-bm-projection').value      = s.projection;
-        $('set-bm-outline').value         = s.outline;
-        $('set-bm-ocean').value           = s.oceanFill;
-        $('set-bm-land').value            = s.landFill;
-        $('set-bm-land-stroke').value     = s.landStroke;
-        $('set-bm-land-sw').value         = s.landStrokeWidth;
-        $('set-bm-border').value          = s.borderStroke;
-        $('set-bm-border-sw').value       = s.borderStrokeWidth;
-        $('set-bm-grat').checked          = s.showGraticule;
-        $('set-bm-grat-step').value       = s.graticuleStep;
-        $('set-bm-grat-stroke').value     = s.graticuleStroke;
-        $('set-bm-grat-opacity').value    = s.graticuleOpacity;
-        $('set-bm-outline-stroke').value  = s.outlineStroke;
-        $('set-bm-outline-sw').value      = s.outlineStrokeWidth;
+        $('set-bm-projection').value        = s.projection;
+        $('set-bm-bg').value                = s.backgroundFill || '#ffffff';
+        $('set-bm-grat').checked            = s.showGraticule !== false;
+        $('set-bm-grat-step').value         = s.graticuleStep ?? 10;
+        $('set-bm-grat-stroke').value       = s.graticuleStroke || '#ffffff';
+        $('set-bm-grat-opacity').value      = s.graticuleOpacity ?? 0.1;
+        $('set-bm-proj-boundary').value     = s.projectionBoundaryStroke || '#4a8a5a';
+        $('set-bm-proj-boundary-sw').value  = s.projectionBoundaryWidth ?? 1;
         break;
       case LAYER_TYPES.GEOJSON:
         $('set-gj-fill').value    = s.fill;
         $('set-gj-fill-op').value = s.fillOpacity;
         $('set-gj-stroke').value  = s.stroke;
         $('set-gj-sw').value      = s.strokeWidth;
+        $('set-gj-perf-auto').checked = s.autoPerf !== false;
+        $('set-gj-min-zoom').value    = Number.isFinite(+s.minZoom) ? +s.minZoom : 2;
+        $('set-gj-max-visible').value = Number.isFinite(+s.maxVisible) ? +s.maxVisible : 2000;
+        $('set-gj-simplify').value    = Number.isFinite(+s.simplify) ? +s.simplify : 0;
+        _syncOceanLayerUI(layer);
+        _syncGeoJSONPerfUI();
+        break;
+      case LAYER_TYPES.FRAME:
+        $('set-fr-aspect').value  = s.aspectPreset;
+        $('set-fr-fill-on').checked = s.showFill !== false;
+        $('set-fr-fill').value    = s.fill;
+        $('set-fr-fill-op').value = s.fillOpacity;
+        $('set-fr-stroke').value  = s.stroke;
+        $('set-fr-sw').value      = s.strokeWidth;
         break;
       case LAYER_TYPES.POINTS:
         $('set-pt-radius').value  = s.radius;
@@ -357,26 +472,40 @@ export async function app(opts = {}) {
     const s = layer.style;
     switch (layer.type) {
       case LAYER_TYPES.BASEMAP:
-        s.projection       = $('set-bm-projection')?.value;
-        s.outline          = $('set-bm-outline')?.value;
-        s.oceanFill        = $('set-bm-ocean')?.value;
-        s.landFill         = $('set-bm-land')?.value;
-        s.landStroke       = $('set-bm-land-stroke')?.value;
-        s.landStrokeWidth  = +$('set-bm-land-sw')?.value;
-        s.borderStroke     = $('set-bm-border')?.value;
-        s.borderStrokeWidth= +$('set-bm-border-sw')?.value;
-        s.showGraticule    = $('set-bm-grat')?.checked;
-        s.graticuleStep    = +$('set-bm-grat-step')?.value;
-        s.graticuleStroke  = $('set-bm-grat-stroke')?.value;
-        s.graticuleOpacity = +$('set-bm-grat-opacity')?.value;
-        s.outlineStroke    = $('set-bm-outline-stroke')?.value;
-        s.outlineStrokeWidth = +$('set-bm-outline-sw')?.value;
+        s.projection               = $('set-bm-projection')?.value;
+        s.backgroundFill           = $('set-bm-bg')?.value;
+        s.showGraticule            = $('set-bm-grat')?.checked;
+        s.graticuleStep            = +$('set-bm-grat-step')?.value;
+        s.graticuleStroke          = $('set-bm-grat-stroke')?.value;
+        s.graticuleOpacity         = +$('set-bm-grat-opacity')?.value;
+        s.projectionBoundaryStroke = $('set-bm-proj-boundary')?.value;
+        s.projectionBoundaryWidth  = +$('set-bm-proj-boundary-sw')?.value;
         break;
       case LAYER_TYPES.GEOJSON:
         s.fill        = $('set-gj-fill')?.value;
         s.fillOpacity = +$('set-gj-fill-op')?.value;
         s.stroke      = $('set-gj-stroke')?.value;
         s.strokeWidth = +$('set-gj-sw')?.value;
+        s.autoPerf    = $('set-gj-perf-auto')?.checked;
+        s.minZoom     = +$('set-gj-min-zoom')?.value;
+        s.maxVisible  = +$('set-gj-max-visible')?.value;
+        s.simplify    = +$('set-gj-simplify')?.value;
+        if (_isOceansLayer(layer)) {
+          s.oceanFill = $('set-oc-ocean')?.value;
+          s.fill = s.oceanFill;
+          s.landFill = $('set-oc-land')?.value;
+          s.landBoundaryStroke = $('set-oc-boundary')?.value;
+          s.landBoundaryWidth = +$('set-oc-boundary-sw')?.value;
+        }
+        _syncGeoJSONPerfUI();
+        break;
+      case LAYER_TYPES.FRAME:
+        s.aspectPreset = $('set-fr-aspect')?.value;
+        s.showFill     = $('set-fr-fill-on')?.checked;
+        s.fill         = $('set-fr-fill')?.value;
+        s.fillOpacity  = +$('set-fr-fill-op')?.value;
+        s.stroke       = $('set-fr-stroke')?.value;
+        s.strokeWidth  = +$('set-fr-sw')?.value;
         break;
       case LAYER_TYPES.POINTS:
         s.radius      = +$('set-pt-radius')?.value;
@@ -397,6 +526,24 @@ export async function app(opts = {}) {
         s.nodeOpacity   = +$('set-tr-node-op')?.value;
         break;
     }
+  }
+
+  function _syncGeoJSONPerfUI() {
+    const auto = $('set-gj-perf-auto')?.checked;
+    if ($('set-gj-min-zoom')) $('set-gj-min-zoom').disabled = !!auto;
+    if ($('set-gj-max-visible')) $('set-gj-max-visible').disabled = !!auto;
+  }
+
+  function _syncOceanLayerUI(layer) {
+    const panel = $('settings-oceans-extra');
+    const isOcean = _isOceansLayer(layer);
+    if (panel) panel.style.display = isOcean ? '' : 'none';
+    if (!isOcean) return;
+    const s = layer.style || {};
+    if ($('set-oc-ocean')) $('set-oc-ocean').value = s.oceanFill || s.fill || '#0a3340';
+    if ($('set-oc-land')) $('set-oc-land').value = s.landFill || '#1a3a2a';
+    if ($('set-oc-boundary')) $('set-oc-boundary').value = s.landBoundaryStroke || '#4a8a5a';
+    if ($('set-oc-boundary-sw')) $('set-oc-boundary-sw').value = s.landBoundaryWidth ?? 0.5;
   }
 
   // Wire all settings inputs for live update
@@ -443,7 +590,6 @@ export async function app(opts = {}) {
   let _projectionDragging = false;
   let _lastDragX = 0;
   let _lastDragY = 0;
-  const statusStats = $('status-stats');
   let _statusBeforeSpaceHint = '';
 
   function _getBasemapCenter() {
@@ -464,6 +610,30 @@ export async function app(opts = {}) {
   function _restoreStatusAfterSpaceHint() {
     if (!statusStats) return;
     statusStats.textContent = _statusBeforeSpaceHint || '';
+    if (!statusStats.textContent) _updateSelectedGeoJSONStatus();
+  }
+
+  function _updateSelectedGeoJSONStatus() {
+    if (!statusStats || _spaceHeld) return;
+    const selected = layers.find(l => l.id === selectedId);
+    if (!selected || selected.type !== LAYER_TYPES.GEOJSON) {
+      if (statusStats.dataset.mode === 'geojson') {
+        statusStats.textContent = '';
+        delete statusStats.dataset.mode;
+      }
+      return;
+    }
+
+    const stats = renderer.getGeoJSONRenderStats(selected.id);
+    if (!stats) return;
+
+    if (stats.hiddenByZoom) {
+      statusStats.textContent = `GeoJSON: 0/${stats.totalFeatures} visible (zoom ${stats.zoomScale.toFixed(2)} < ${stats.minZoom.toFixed(2)})`;
+    } else {
+      const capped = stats.capped ? `, capped at ${stats.maxVisibleFeatures}` : '';
+      statusStats.textContent = `GeoJSON: ${stats.renderedFeatures}/${stats.totalFeatures} visible (${stats.inViewFeatures} in view${capped})`;
+    }
+    statusStats.dataset.mode = 'geojson';
   }
 
   function _isEditableTarget(el) {
@@ -618,7 +788,12 @@ export async function app(opts = {}) {
 
     const name = filename.replace(/\.[^.]+$/, '');
     const layer = createLayer(layerType, name, data);
+    if (/^admin[ _]?1$/i.test(name) || /^admin[ _]?2$/i.test(name)) {
+      layer.visible = false;
+    }
+    _applyNamedGeojsonPerformanceProfile(layer);
     layers.push(layer);
+    _ensureFixedBoundaryLayers();
     selectedId = layer.id;
 
     _renderLayerList();
@@ -631,6 +806,165 @@ export async function app(opts = {}) {
     } else {
       $('status-stats').textContent = `Imported: ${filename}`;
     }
+  }
+
+  function _findAdmin1Index() {
+    return layers.findIndex(l =>
+      l.type === LAYER_TYPES.GEOJSON &&
+      /^admin[ _]?1$/i.test((l.name || '').trim()));
+  }
+
+  function _normalizedLayerName(layer) {
+    return (layer?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+
+  function _isOceansLayer(layer) {
+    if (!layer || layer.type !== LAYER_TYPES.GEOJSON) return false;
+    const n = _normalizedLayerName(layer);
+    return n === 'oceans' || n === 'oceanmask';
+  }
+
+  function _isAlwaysOnGeoLayer(layer) {
+    if (!layer || layer.type !== LAYER_TYPES.GEOJSON) return false;
+    const n = _normalizedLayerName(layer);
+    return n === 'admin0';
+  }
+
+  function _isLockedLayer(layer) {
+    if (!layer) return false;
+    return layer.type === LAYER_TYPES.BASEMAP || layer.type === LAYER_TYPES.FRAME || _isOceansLayer(layer);
+  }
+
+  function _applyNamedGeojsonPerformanceProfile(layer) {
+    if (!layer || layer.type !== LAYER_TYPES.GEOJSON) return;
+    const n = _normalizedLayerName(layer);
+
+    if (n === 'oceanmask' || n === 'oceans') {
+      layer.visible = true;
+      layer.style.autoPerf = true;
+      layer.style.simplify = 3;
+      layer.style.oceanFill = layer.style.oceanFill || layer.style.fill || '#0a3340';
+      layer.style.landFill = layer.style.landFill || '#1a3a2a';
+      layer.style.landBoundaryStroke = layer.style.landBoundaryStroke || '#4a8a5a';
+      layer.style.landBoundaryWidth = layer.style.landBoundaryWidth ?? 0.5;
+      return;
+    }
+
+    if (n === 'admin0') {
+      layer.visible = true;
+      layer.style.autoPerf = true;
+      layer.style.simplify = 2;
+      return;
+    }
+
+    if (n === 'admin1') {
+      layer.style.autoPerf = true;
+      layer.style.simplify = 2;
+      return;
+    }
+
+    if (n === 'admin2') {
+      layer.style.autoPerf = true;
+      layer.style.simplify = 3;
+    }
+  }
+
+  function _findOceanMaskIndex() {
+    return layers.findIndex(l =>
+      l.type === LAYER_TYPES.GEOJSON &&
+      /^(ocean[ _]?mask|oceans)$/i.test((l.name || '').trim()));
+  }
+
+  async function _loadDefaultAdmin0Layer() {
+    if (layers.some(l => l.type === LAYER_TYPES.GEOJSON && l.name === 'Admin 0')) return;
+    try {
+      const response = await fetch('data/maps/Admin_0.geojson');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const json = await response.json();
+      const data = parseGeoData(json, topojson);
+      const layer = createLayer(LAYER_TYPES.GEOJSON, 'Admin 0', data);
+      layer.style.fillOpacity = 0;
+      layer.style.stroke = '#6a6a6a';
+      layer.style.strokeWidth = 0.7;
+      _applyNamedGeojsonPerformanceProfile(layer);
+
+      const frameIdx = layers.findIndex(l => l.type === LAYER_TYPES.FRAME);
+      const insertAt = frameIdx > 0 ? frameIdx : layers.length;
+      layers.splice(insertAt, 0, layer);
+      _ensureFixedBoundaryLayers();
+    } catch (err) {
+      console.warn('Could not auto-load Admin 0 layer:', err);
+    }
+  }
+
+  async function _loadDefaultOceanMaskLayer() {
+    if (_findOceanMaskIndex() >= 0) return;
+
+    const candidates = ['data/maps/Ocean_Mask.geojson', 'data/maps/Ocean Mask.geojson'];
+    let data = null;
+    let loadedFrom = '';
+
+    for (const path of candidates) {
+      try {
+        const response = await fetch(path);
+        if (!response.ok) continue;
+        const json = await response.json();
+        data = parseGeoData(json, topojson);
+        loadedFrom = path;
+        break;
+      } catch {
+        // try next candidate
+      }
+    }
+
+    if (!data) {
+      console.warn('Could not auto-load Ocean Mask layer: file not found in known locations');
+      return;
+    }
+
+    const layer = createLayer(LAYER_TYPES.GEOJSON, 'Oceans', data);
+    layer.style.fill = '#0a3340';
+    layer.style.fillOpacity = 0.22;
+    layer.style.stroke = '#0a3340';
+    layer.style.strokeWidth = 0;
+    _applyNamedGeojsonPerformanceProfile(layer);
+
+    layers.splice(1, 0, layer);
+
+    _ensureFixedBoundaryLayers();
+    if (loadedFrom) console.info(`Auto-loaded Ocean_Mask from ${loadedFrom}`);
+  }
+
+  async function _loadDefaultAdminDetailLayers() {
+    const items = [
+      { path: 'data/maps/Admin_1.geojson', name: 'Admin_1' },
+      { path: 'data/maps/Admin_2.geojson', name: 'Admin_2' },
+    ];
+
+    for (const item of items) {
+      const exists = layers.some(l => l.type === LAYER_TYPES.GEOJSON && _normalizedLayerName(l) === item.name.toLowerCase().replace(/[^a-z0-9]/g, ''));
+      if (exists) continue;
+      try {
+        const response = await fetch(item.path);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const json = await response.json();
+        const data = parseGeoData(json, topojson);
+        const layer = createLayer(LAYER_TYPES.GEOJSON, item.name, data);
+        layer.visible = false;
+        layer.style.fillOpacity = 0;
+        layer.style.stroke = item.name === 'Admin_1' ? '#5d5d5d' : '#4d4d4d';
+        layer.style.strokeWidth = item.name === 'Admin_1' ? 0.45 : 0.35;
+        _applyNamedGeojsonPerformanceProfile(layer);
+
+        const frameIdx = _frameIndex();
+        const insertAt = frameIdx > 0 ? frameIdx : layers.length;
+        layers.splice(insertAt, 0, layer);
+      } catch (err) {
+        console.warn(`Could not auto-load ${item.name} layer:`, err);
+      }
+    }
+
+    _ensureFixedBoundaryLayers();
   }
 
   async function _openTreeMappingDialog(analysis) {
@@ -797,6 +1131,9 @@ export async function app(opts = {}) {
   initToolbarHeight(root);
 
   // ── Initial render ───────────────────────────────────────────────────
+  await _loadDefaultAdmin0Layer();
+  await _loadDefaultOceanMaskLayer();
+  await _loadDefaultAdminDetailLayers();
   _renderLayerList();
   _showSettingsForLayer(selectedId);
   await _render();

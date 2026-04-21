@@ -12,6 +12,15 @@ export const LAYER_TYPES = {
   GEOJSON: 'geojson',
   POINTS:  'points',
   TREE:    'tree',
+  FRAME:   'frame',
+};
+
+export const FRAME_ASPECTS = {
+  square:        { label: '1:1 (Square)', ratio: 1 },
+  a4Portrait:    { label: 'A4 Portrait (210:297)', ratio: 210 / 297 },
+  a4Landscape:   { label: 'A4 Landscape (297:210)', ratio: 297 / 210 },
+  slideStandard: { label: 'Slide Standard (4:3)', ratio: 4 / 3 },
+  slideWide:     { label: 'Slide Wide (16:9)', ratio: 16 / 9 },
 };
 
 /* ── Built-in map outline sources (TopoJSON from world-atlas) ──────── */
@@ -31,6 +40,7 @@ export const LAYER_ICONS = {
   geojson: 'bi-hexagon',
   points:  'bi-geo-alt',
   tree:    'bi-diagram-3',
+  frame:   'bi-bounding-box-circles',
 };
 
 /* ── Default styles per layer type ─────────────────────────────────── */
@@ -40,25 +50,28 @@ const DEFAULT_STYLES = {
     projection:        'geoNaturalEarth1',
     center:            [0, 0],
     rotate:            [0, 0, 0],
-    outline:           'countries-110m',
+    backgroundFill:    '#ffffff',
+    backgroundOpacity: 1,
     showGraticule:     true,
     graticuleStep:     10,
-    landFill:          '#1a3a2a',
-    landStroke:        '#4a8a5a',
-    landStrokeWidth:   0.5,
-    oceanFill:         '#02292e',
-    borderStroke:      '#3a6a4a',
-    borderStrokeWidth: 0.3,
-    outlineStroke:     '#4a8a5a',
-    outlineStrokeWidth:1,
     graticuleStroke:   '#ffffff',
     graticuleOpacity:  0.1,
+    oceanFill:         '#02292e',
+    landFill:          '#1a3a2a',
+    landBoundaryStroke:'#4a8a5a',
+    landBoundaryWidth: 0.5,
+    projectionBoundaryStroke: '#4a8a5a',
+    projectionBoundaryWidth: 1,
   },
   geojson: {
     fill:        '#2aa198',
     fillOpacity: 0.3,
     stroke:      '#2aa198',
     strokeWidth: 1,
+    autoPerf:    true,
+    minZoom:     2,
+    maxVisible:  2000,
+    simplify:    0,
   },
   points: {
     radius:      4,
@@ -77,6 +90,15 @@ const DEFAULT_STYLES = {
     nodeColor:     '#BF4B43',
     nodeRadius:    3,
     nodeOpacity:   0.8,
+  },
+  frame: {
+    aspectPreset:  'slideWide',
+    margin:        24,
+    showFill:      true,
+    fill:          '#ffffff',
+    fillOpacity:   1,
+    stroke:        '#d8d8d8',
+    strokeWidth:   1.5,
   },
 };
 
@@ -114,6 +136,6 @@ export function duplicateLayer(layer) {
 }
 
 function _defaultName(type) {
-  const names = { basemap: 'Base Map', geojson: 'GeoJSON', points: 'Points', tree: 'Tree' };
+  const names = { basemap: 'Base Map', geojson: 'GeoJSON', points: 'Points', tree: 'Tree', frame: 'Map Frame' };
   return names[type] || 'Layer';
 }
