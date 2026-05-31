@@ -75,8 +75,10 @@ export const LAYER_ICONS = {
 
 const DEFAULT_STYLES = {
   basemap: {
+    baseMode:          'globe',
     basemapSource:     'd3',
     projection:        'geoNaturalEarth1',
+    datum:             'WGS84',
     center:            [0, 0],
     rotate:            [0, 0, 0],
     backgroundFill:    '#ffffff',
@@ -94,6 +96,18 @@ const DEFAULT_STYLES = {
     landBoundaryWidth: 0.5,
     projectionBoundaryStroke: '#4a8a5a',
     projectionBoundaryWidth: 1,
+    geographicSourceType: 'raster',
+    geographicRasterSet: 'NE1',
+    geographicRasterSwitchZoom: 2.5,
+    geographicRasterForceTier: 'auto',
+    geographicVectorScale: '50m',
+    geographicOceanFill: '#0d2f40',
+    geographicLandFill: '#9aa876',
+    geographicShowCountries: true,
+    geographicCountryScale: '50m',
+    geographicCountryStroke: '#3e3e3e',
+    geographicCountryStrokeWidth: 0.45,
+    geographicCountryOpacity: 0.65,
   },
   geojson: {
     fill:        '#2aa198',

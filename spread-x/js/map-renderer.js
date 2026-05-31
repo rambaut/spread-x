@@ -98,7 +98,8 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
   const zoom = d3.zoom()
     .filter(event => {
       if (_spacePanActive && (event.type === 'mousedown' || event.type === 'touchstart')) return false;
-      return (!event.ctrlKey || event.type === 'wheel') && !event.button;
+      const modifierHeld = !!event.altKey;
+      return (!modifierHeld || event.type === 'wheel') && !event.button;
     })
     .scaleExtent([0.5, 30])
     .on('zoom', ({ transform }) => {
@@ -139,7 +140,10 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
     const frameLayer = _layers.find(l => l.type === LAYER_TYPES.FRAME);
     const frameRect = _computeFrameRect(_width, _height, frameLayer?.style);
     _currentFrameRect = frameRect;
-    const projId = base?.style.projection || 'geoNaturalEarth1';
+    const baseMode = base?.style?.baseMode || 'globe';
+    const projId = baseMode === 'geographic'
+      ? 'geoEquirectangular'
+      : (base?.style.projection || 'geoNaturalEarth1');
     const center = base?.style.center  || [0, 0];
     const rotate = base?.style.rotate  || [0, 0, 0];
     const signature = JSON.stringify({ projId, center, rotate, frameRect, width: _width, height: _height });
@@ -189,7 +193,7 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
         .attr('opacity', layer.opacity);
 
       switch (layer.type) {
-        case LAYER_TYPES.BASEMAP: await _renderBasemap(g, layer, oceansLayer?.style);  break;
+        case LAYER_TYPES.BASEMAP: await _renderBasemap(g, layer);  break;
         case LAYER_TYPES.GEOJSON:       _renderGeoJSON(g, layer);  break;
         case LAYER_TYPES.POINTS:        _renderPoints(g, layer);   break;
         case LAYER_TYPES.TREE:          _renderTree(g, layer);     break;
@@ -308,8 +312,13 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
 
   /* ── layer renderers ─────────────────────────────────────────────── */
 
-  async function _renderBasemap(g, layer, oceansStyle = null) {
+  async function _renderBasemap(g, layer) {
     const s = layer.style;
+    if ((s.baseMode || 'globe') === 'geographic') {
+      await _renderGeographicBasemap(g, layer);
+      return;
+    }
+
     const showGlobe = s.showGlobe !== false;
     const oceanFill = s.oceanFill;
     const landFill = s.landFill;
@@ -414,6 +423,83 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
     } catch (err) {
       console.warn('Failed to load map outline:', err);
     }
+  }
+
+  async function _renderGeographicBasemap(g, layer) {
+    const s = layer.style || {};
+    const zoomK = _currentTransform?.k || 1;
+    const sourceType = s.geographicSourceType || 'raster';
+    const oceanFill = s.geographicOceanFill || s.oceanFill || '#0d2f40';
+
+    g.append('path')
+      .datum({ type: 'Sphere' })
+      .attr('d', _path)
+      .attr('fill', oceanFill)
+      .attr('stroke', s.projectionBoundaryStroke || s.outlineStroke || '#4a8a5a')
+      .attr('stroke-width', s.projectionBoundaryWidth ?? s.outlineStrokeWidth ?? 1)
+      .attr('vector-effect', 'non-scaling-stroke')
+      .attr('stroke-linejoin', 'round')
+      .attr('stroke-linecap', 'round');
+
+    if (sourceType === 'raster') {
+      const rasterUrl = _chooseGeographicRasterPath(s, zoomK);
+      const rect = _computeGeographicImageRect();
+      if (rasterUrl && rect) {
+        g.append('image')
+          .attr('class', 'ne-raster')
+          .attr('href', rasterUrl)
+          .attr('x', rect.x)
+          .attr('y', rect.y)
+          .attr('width', rect.width)
+          .attr('height', rect.height)
+          .attr('preserveAspectRatio', 'none')
+          .attr('crossorigin', 'anonymous');
+      }
+    } else {
+      const vectorScale = _normalizeScale(s.geographicVectorScale, '50m');
+      const landTopo = await _fetchOutline(`ne-land-${vectorScale}`);
+      if (landTopo) {
+        const keys = Object.keys(landTopo.objects || {});
+        const key = keys[0];
+        if (key) {
+          const land = _prepareForSeamClipping(topojson.feature(landTopo, landTopo.objects[key]));
+          g.append('path')
+            .attr('class', 'ne-land')
+            .datum(land)
+            .attr('d', _path)
+            .attr('fill', s.geographicLandFill || '#9aa876')
+            .attr('stroke', 'none');
+        }
+      }
+    }
+
+    if (s.geographicShowCountries !== false) {
+      await _drawGeographicCountries(g, s);
+    }
+  }
+
+  async function _drawGeographicCountries(g, style) {
+    const scale = _normalizeScale(style.geographicCountryScale || style.geographicVectorScale, '50m');
+    const countryTopo = await _fetchOutline(`ne-countries-${scale}`);
+    if (!countryTopo) return;
+    const key = Object.keys(countryTopo.objects || {})[0];
+    if (!key) return;
+
+    const mesh = _prepareForSeamClipping(
+      topojson.mesh(countryTopo, countryTopo.objects[key], (a, b) => a !== b)
+    );
+
+    g.append('path')
+      .attr('class', 'ne-countries')
+      .datum(mesh)
+      .attr('d', _path)
+      .attr('fill', 'none')
+      .attr('stroke', style.geographicCountryStroke || '#3e3e3e')
+      .attr('stroke-width', style.geographicCountryStrokeWidth ?? 0.45)
+      .attr('stroke-opacity', style.geographicCountryOpacity ?? 0.65)
+      .attr('vector-effect', 'non-scaling-stroke')
+      .attr('stroke-linejoin', 'round')
+      .attr('stroke-linecap', 'round');
   }
 
   function _isOceansLayer(layer) {
@@ -589,6 +675,36 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
       case 'ne10':  return ['ne-land-10m',  'ne-countries-10m'];
       default:      return ['land-110m',    'countries-110m'];
     }
+  }
+
+  function _normalizeScale(scale, fallback = '50m') {
+    return scale === '10m' || scale === '50m' || scale === '110m' ? scale : fallback;
+  }
+
+  function _chooseGeographicRasterPath(style = {}, zoomK = 1) {
+    const setName = String(style.geographicRasterSet || 'NE1').toUpperCase();
+    const switchZoom = Number(style.geographicRasterSwitchZoom ?? 2.5);
+    const forcedTier = String(style.geographicRasterForceTier || 'auto').toLowerCase();
+    const useHr = forcedTier === 'hr' ? true : forcedTier === '50m' ? false : zoomK >= switchZoom;
+    const base = `data/maps/NaturalEarth/${setName}`;
+    const low = `${base}/${setName}_50M_SR_W/${setName}_50M_SR_W.tif`;
+    const hr = `${base}/${setName}_HR_LC_SR_W_DR/${setName}_HR_LC_SR_W_DR.tif`;
+    return useHr ? hr : low;
+  }
+
+  function _computeGeographicImageRect() {
+    if (!_projection) return null;
+    const nw = _projection([-180, 90]);
+    const se = _projection([180, -90]);
+    if (!nw || !se) return null;
+    const x = Math.min(nw[0], se[0]);
+    const y = Math.min(nw[1], se[1]);
+    const width = Math.abs(se[0] - nw[0]);
+    const height = Math.abs(se[1] - nw[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      return null;
+    }
+    return { x, y, width, height };
   }
 
   function _fetchOutline(outlineId) {

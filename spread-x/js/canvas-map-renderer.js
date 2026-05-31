@@ -70,6 +70,8 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
   const _resolvedGeoDataCache = new WeakMap();
   const _geojsonLayerCache   = new WeakMap();
   const _topoCache = {};
+  const _rasterImageCache = new Map();
+  const _rasterImageFailures = new Set();
   let _basemapCache = null; // { stamp, projId, land, countryMesh }
   let _graticuleCache = null; // { step, graticule }
 
@@ -80,7 +82,8 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
   const zoom = d3.zoom()
     .filter(event => {
       if (_spacePanActive && (event.type === 'mousedown' || event.type === 'touchstart')) return false;
-      return (!event.ctrlKey || event.type === 'wheel') && !event.button;
+      const modifierHeld = !!event.altKey;
+      return (!modifierHeld || event.type === 'wheel') && !event.button;
     })
     .scaleExtent([0.5, 30])
     .on('zoom', ({ transform }) => {
@@ -195,7 +198,10 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
     const frameRect  = _computeFrameRect(_width, _height, frameLayer?.style);
     _currentFrameRect = frameRect;
 
-    const projId = base?.style.projection || 'geoNaturalEarth1';
+    const baseMode = base?.style?.baseMode || 'globe';
+    const projId = baseMode === 'geographic'
+      ? 'geoEquirectangular'
+      : (base?.style.projection || 'geoNaturalEarth1');
     const center = base?.style.center     || [0, 0];
     const rotate = base?.style.rotate     || [0, 0, 0];
     const signature = JSON.stringify({ projId, center, rotate, frameRect, width: _width, height: _height });
@@ -280,6 +286,11 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
 
   async function _drawBasemap(ctx, layer, k) {
     const s = layer.style;
+    if ((s.baseMode || 'globe') === 'geographic') {
+      await _drawGeographicBasemap(ctx, s, k);
+      return;
+    }
+
     const showGlobe            = s.showGlobe !== false;
     const showLandBoundaries   = showGlobe && s.showLandBoundaries !== false;
     const showCountryBoundaries = showGlobe && s.showCountryBoundaries !== false;
@@ -385,6 +396,76 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
       }
     } catch (err) {
       console.warn('Failed to load basemap topology:', err);
+    }
+  }
+
+  async function _drawGeographicBasemap(ctx, style, k) {
+    const sourceType = style.geographicSourceType || 'raster';
+    const oceanFill = style.geographicOceanFill || style.oceanFill || '#0d2f40';
+    const ctxPath = d3.geoPath(_projection, ctx);
+
+    ctx.save();
+    ctx.beginPath();
+    ctxPath({ type: 'Sphere' });
+    ctx.fillStyle = oceanFill;
+    ctx.fill();
+    ctx.strokeStyle = style.projectionBoundaryStroke || style.outlineStroke || '#4a8a5a';
+    ctx.lineWidth = (style.projectionBoundaryWidth ?? style.outlineStrokeWidth ?? 1) / k;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.stroke();
+    ctx.restore();
+
+    if (sourceType === 'raster') {
+      const rasterUrl = _chooseGeographicRasterPath(style, _currentTransform?.k || 1);
+      const rect = _computeGeographicImageRect();
+      if (rasterUrl && rect) {
+        const img = await _loadRasterImage(rasterUrl);
+        if (img) {
+          ctx.save();
+          ctx.globalAlpha *= 1;
+          ctx.drawImage(img, rect.x, rect.y, rect.width, rect.height);
+          ctx.restore();
+        }
+      }
+    } else {
+      const scale = _normalizeScale(style.geographicVectorScale, '50m');
+      const landTopo = await _fetchOutline(`ne-land-${scale}`);
+      if (landTopo) {
+        const key = Object.keys(landTopo.objects || {})[0];
+        if (key) {
+          const land = _prepareForSeamClipping(topojson.feature(landTopo, landTopo.objects[key]));
+          ctx.save();
+          ctx.beginPath();
+          ctxPath(land);
+          ctx.fillStyle = style.geographicLandFill || '#9aa876';
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+    }
+
+    if (style.geographicShowCountries !== false) {
+      const scale = _normalizeScale(style.geographicCountryScale || style.geographicVectorScale, '50m');
+      const countriesTopo = await _fetchOutline(`ne-countries-${scale}`);
+      if (countriesTopo) {
+        const key = Object.keys(countriesTopo.objects || {})[0];
+        if (key) {
+          const mesh = _prepareForSeamClipping(
+            topojson.mesh(countriesTopo, countriesTopo.objects[key], (a, b) => a !== b)
+          );
+          ctx.save();
+          ctx.beginPath();
+          ctxPath(mesh);
+          ctx.strokeStyle = style.geographicCountryStroke || '#3e3e3e';
+          ctx.lineWidth = (style.geographicCountryStrokeWidth ?? 0.45) / k;
+          ctx.lineJoin = 'round';
+          ctx.lineCap = 'round';
+          ctx.globalAlpha *= (style.geographicCountryOpacity ?? 0.65);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
     }
   }
 
@@ -556,6 +637,55 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
       case 'ne10':  return ['ne-land-10m',  'ne-countries-10m'];
       default:      return ['land-110m',    'countries-110m'];
     }
+  }
+
+  function _normalizeScale(scale, fallback = '50m') {
+    return scale === '10m' || scale === '50m' || scale === '110m' ? scale : fallback;
+  }
+
+  function _chooseGeographicRasterPath(style = {}, zoomK = 1) {
+    const setName = String(style.geographicRasterSet || 'NE1').toUpperCase();
+    const switchZoom = Number(style.geographicRasterSwitchZoom ?? 2.5);
+    const forcedTier = String(style.geographicRasterForceTier || 'auto').toLowerCase();
+    const useHr = forcedTier === 'hr' ? true : forcedTier === '50m' ? false : zoomK >= switchZoom;
+    const base = `data/maps/NaturalEarth/${setName}`;
+    const low = `${base}/${setName}_50M_SR_W/${setName}_50M_SR_W.tif`;
+    const hr = `${base}/${setName}_HR_LC_SR_W_DR/${setName}_HR_LC_SR_W_DR.tif`;
+    return useHr ? hr : low;
+  }
+
+  function _computeGeographicImageRect() {
+    if (!_projection) return null;
+    const nw = _projection([-180, 90]);
+    const se = _projection([180, -90]);
+    if (!nw || !se) return null;
+    const x = Math.min(nw[0], se[0]);
+    const y = Math.min(nw[1], se[1]);
+    const width = Math.abs(se[0] - nw[0]);
+    const height = Math.abs(se[1] - nw[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      return null;
+    }
+    return { x, y, width, height };
+  }
+
+  function _loadRasterImage(url) {
+    if (!url || _rasterImageFailures.has(url)) return Promise.resolve(null);
+    if (_rasterImageCache.has(url)) return _rasterImageCache.get(url);
+
+    const promise = new Promise(resolve => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = () => {
+        _rasterImageFailures.add(url);
+        resolve(null);
+      };
+      img.src = url;
+    });
+
+    _rasterImageCache.set(url, promise);
+    return promise;
   }
 
   function _fetchOutline(outlineId) {

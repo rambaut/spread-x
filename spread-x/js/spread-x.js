@@ -50,6 +50,17 @@ export async function app(opts = {}) {
   let settings = {};
   let _layoutMode = false;
   let _preLayoutVisibilities = {};   // { layerId: bool } saved on layout entry
+  let _naturalEarthRasterSets = ['NE1'];
+  let _rasterSetsDiscovered = false;
+  let _zoomHistory = [];
+  let _zoomHistoryIndex = -1;
+  let _zoomHistoryTimer = null;
+  let _suppressZoomHistory = false;
+
+  function _isGeographicRasterMode() {
+    const base = layers.find(l => l.type === LAYER_TYPES.BASEMAP);
+    return base?.style?.baseMode === 'geographic' && (base?.style?.geographicSourceType || 'raster') === 'raster';
+  }
 
   // ── Commands ─────────────────────────────────────────────────────────
   const commands = createCommands(root, COMMAND_DEFS);
@@ -107,6 +118,9 @@ export async function app(opts = {}) {
   const canvasRenderer = createCanvasMapRenderer({
     canvasElement: canvasEl, d3, topojson,
     onZoomChange: (transform) => {
+      _updateSelectedGeoJSONStatus(transform.k);
+      _recordZoomTransform(transform);
+      if (_isGeographicRasterMode()) return;
       if (transform.k >= CANVAS_TO_SVG_THRESHOLD) _switchToSvg(transform);
     },
   });
@@ -114,6 +128,12 @@ export async function app(opts = {}) {
   const svgRenderer = createMapRenderer({
     svgElement: svgEl, d3, topojson,
     onZoomChange: (transform) => {
+      _updateSelectedGeoJSONStatus(transform.k);
+      _recordZoomTransform(transform);
+      if (_isGeographicRasterMode()) {
+        _switchToCanvas(transform);
+        return;
+      }
       if (transform.k < CANVAS_TO_SVG_THRESHOLD) _switchToCanvas(transform);
     },
   });
@@ -157,7 +177,77 @@ export async function app(opts = {}) {
     panProjectionLongitudeByPixels(dx) {
       return (_usingCanvas ? canvasRenderer : svgRenderer).panProjectionLongitudeByPixels(dx);
     },
+    getZoomTransform() {
+      return (_usingCanvas ? canvasRenderer : svgRenderer).getZoomTransform?.() || d3.zoomIdentity;
+    },
+    syncZoomTransform(transform) {
+      canvasRenderer.syncZoomTransform(transform);
+      svgRenderer.syncZoomTransform(transform);
+    },
   };
+
+  function _cloneTransform(transform) {
+    if (!transform) return d3.zoomIdentity;
+    return d3.zoomIdentity.translate(transform.x, transform.y).scale(transform.k);
+  }
+
+  function _sameTransform(a, b) {
+    if (!a || !b) return false;
+    const eps = 1e-6;
+    return Math.abs(a.k - b.k) < eps && Math.abs(a.x - b.x) < eps && Math.abs(a.y - b.y) < eps;
+  }
+
+  function _updateZoomNavButtons() {
+    const back = $('btn-zoom-back');
+    const fwd = $('btn-zoom-forward');
+    if (back) back.disabled = _zoomHistoryIndex <= 0;
+    if (fwd) fwd.disabled = _zoomHistoryIndex < 0 || _zoomHistoryIndex >= _zoomHistory.length - 1;
+  }
+
+  function _commitZoomTransform(transform) {
+    if (!transform || _suppressZoomHistory) return;
+    if (_zoomHistoryIndex >= 0 && _sameTransform(_zoomHistory[_zoomHistoryIndex], transform)) {
+      _updateZoomNavButtons();
+      return;
+    }
+    if (_zoomHistoryIndex < _zoomHistory.length - 1) {
+      _zoomHistory = _zoomHistory.slice(0, _zoomHistoryIndex + 1);
+    }
+    _zoomHistory.push(_cloneTransform(transform));
+    if (_zoomHistory.length > 200) _zoomHistory.shift();
+    _zoomHistoryIndex = _zoomHistory.length - 1;
+    _updateZoomNavButtons();
+  }
+
+  function _recordZoomTransform(transform, { immediate = false } = {}) {
+    if (!transform || _suppressZoomHistory) return;
+    if (immediate) {
+      clearTimeout(_zoomHistoryTimer);
+      _zoomHistoryTimer = null;
+      _commitZoomTransform(transform);
+      return;
+    }
+    clearTimeout(_zoomHistoryTimer);
+    _zoomHistoryTimer = setTimeout(() => {
+      _zoomHistoryTimer = null;
+      _commitZoomTransform(transform);
+    }, 140);
+  }
+
+  function _applyHistoryTransform(index) {
+    const target = _zoomHistory[index];
+    if (!target) return;
+    _suppressZoomHistory = true;
+    try {
+      renderer.syncZoomTransform(target);
+    } finally {
+      _suppressZoomHistory = false;
+    }
+    _zoomHistoryIndex = index;
+    _updateZoomNavButtons();
+    _updateSelectedGeoJSONStatus(target.k);
+    _queueRender();
+  }
 
   function _resize() {
     const wrapper = $('canvas-wrapper');
@@ -255,6 +345,10 @@ export async function app(opts = {}) {
 
   _upgradeSettingsColourPickers();
   _installSliderReadouts();
+  _populateGeographicRasterSetOptions();
+  _discoverNaturalEarthRasterSets().catch(err => {
+    console.warn('Could not discover Natural Earth raster sets:', err);
+  });
 
   function _upgradeSettingsColourPickers() {
     if (!settingsPanelBody) return;
@@ -480,6 +574,7 @@ export async function app(opts = {}) {
     const s = layer.style;
     switch (layer.type) {
       case LAYER_TYPES.BASEMAP:
+        $('set-bm-mode').value              = s.baseMode || 'globe';
         $('set-bm-projection').value        = s.projection;
         $('set-bm-bg').value                = s.backgroundFill || '#ffffff';
         $('set-bm-grat').checked            = s.showGraticule !== false;
@@ -495,7 +590,17 @@ export async function app(opts = {}) {
         $('set-bm-country-boundaries').checked = s.showCountryBoundaries !== false;
         $('set-bm-globe-outline').value     = s.landBoundaryStroke || '#4a8a5a';
         $('set-bm-globe-outline-sw').value  = s.landBoundaryWidth ?? 0.5;
-        _syncBasemapGlobeUI();
+        $('set-bm-geographic-source').value = s.geographicSourceType || 'raster';
+        _populateGeographicRasterSetOptions(s.geographicRasterSet || 'NE1');
+        $('set-bm-geographic-vector-scale').value = _normalizeScale(s.geographicVectorScale, '50m');
+        $('set-bm-geographic-ocean').value = s.geographicOceanFill || '#0d2f40';
+        $('set-bm-geographic-land').value = s.geographicLandFill || '#9aa876';
+        $('set-bm-geographic-countries-on').checked = s.geographicShowCountries !== false;
+        $('set-bm-geographic-country-scale').value = _normalizeScale(s.geographicCountryScale, '50m');
+        $('set-bm-geographic-country-stroke').value = s.geographicCountryStroke || '#3e3e3e';
+        $('set-bm-geographic-country-width').value = s.geographicCountryStrokeWidth ?? 0.45;
+        $('set-bm-geographic-country-opacity').value = s.geographicCountryOpacity ?? 0.65;
+        _syncBasemapModeUI();
         break;
       case LAYER_TYPES.GEOJSON:
         $('set-gj-fill').value    = s.fill;
@@ -563,6 +668,7 @@ export async function app(opts = {}) {
     const s = layer.style;
     switch (layer.type) {
       case LAYER_TYPES.BASEMAP:
+        s.baseMode                 = $('set-bm-mode')?.value || 'globe';
         s.projection               = $('set-bm-projection')?.value;
         s.backgroundFill           = $('set-bm-bg')?.value;
         s.showGraticule            = $('set-bm-grat')?.checked;
@@ -578,7 +684,28 @@ export async function app(opts = {}) {
         s.showCountryBoundaries    = $('set-bm-country-boundaries')?.checked;
         s.landBoundaryStroke       = $('set-bm-globe-outline')?.value;
         s.landBoundaryWidth        = +$('set-bm-globe-outline-sw')?.value;
-        _syncBasemapGlobeUI();
+        s.datum                    = 'WGS84';
+        s.geographicSourceType     = $('set-bm-geographic-source')?.value || 'raster';
+        s.geographicRasterSet      = $('set-bm-geographic-raster-set')?.value || 'NE1';
+        s.geographicVectorScale    = _normalizeScale($('set-bm-geographic-vector-scale')?.value, '50m');
+        s.geographicOceanFill      = $('set-bm-geographic-ocean')?.value || '#0d2f40';
+        s.geographicLandFill       = $('set-bm-geographic-land')?.value || '#9aa876';
+        s.geographicShowCountries  = $('set-bm-geographic-countries-on')?.checked;
+        s.geographicCountryScale   = _normalizeScale($('set-bm-geographic-country-scale')?.value, '50m');
+        s.geographicCountryStroke  = $('set-bm-geographic-country-stroke')?.value || '#3e3e3e';
+        s.geographicCountryStrokeWidth = +$('set-bm-geographic-country-width')?.value;
+        s.geographicCountryOpacity = +$('set-bm-geographic-country-opacity')?.value;
+        if (s.baseMode === 'geographic') {
+          s.projection = 'geoEquirectangular';
+          s.basemapSource = `ne${s.geographicVectorScale.replace('m', '')}`;
+          s.showGlobe = true;
+          s.showLandBoundaries = false;
+          s.showCountryBoundaries = false;
+        }
+        if (s.baseMode === 'geographic' && s.geographicSourceType === 'raster') {
+          _switchToCanvas();
+        }
+        _syncBasemapModeUI();
         break;
       case LAYER_TYPES.GEOJSON:
         s.fill        = $('set-gj-fill')?.value;
@@ -635,7 +762,12 @@ export async function app(opts = {}) {
     }
   }
 
-  function _syncBasemapGlobeUI() {
+  function _syncBasemapModeUI() {
+    const mode = $('set-bm-mode')?.value || 'globe';
+    const geographic = mode === 'geographic';
+    if ($('settings-bm-globe-group')) $('settings-bm-globe-group').style.display = geographic ? 'none' : '';
+    if ($('settings-bm-geographic-group')) $('settings-bm-geographic-group').style.display = geographic ? '' : 'none';
+
     const enabled = $('set-bm-globe-on')?.checked !== false;
     for (const id of ['set-bm-land', 'set-bm-land-boundaries', 'set-bm-country-boundaries']) {
       if ($(id)) $(id).disabled = !enabled;
@@ -643,6 +775,80 @@ export async function app(opts = {}) {
     const outlineEnabled = enabled && (($('set-bm-land-boundaries')?.checked !== false) || ($('set-bm-country-boundaries')?.checked !== false));
     if ($('set-bm-globe-outline')) $('set-bm-globe-outline').disabled = !outlineEnabled;
     if ($('set-bm-globe-outline-sw')) $('set-bm-globe-outline-sw').disabled = !outlineEnabled;
+
+    const geographicSource = $('set-bm-geographic-source')?.value || 'raster';
+    if ($('settings-bm-geographic-raster-group')) $('settings-bm-geographic-raster-group').style.display = (geographic && geographicSource === 'raster') ? '' : 'none';
+    if ($('settings-bm-geographic-vector-group')) $('settings-bm-geographic-vector-group').style.display = (geographic && geographicSource === 'vector') ? '' : 'none';
+
+    const showCountries = $('set-bm-geographic-countries-on')?.checked !== false;
+    for (const id of ['set-bm-geographic-country-scale', 'set-bm-geographic-country-stroke', 'set-bm-geographic-country-width', 'set-bm-geographic-country-opacity']) {
+      if ($(id)) $(id).disabled = !showCountries;
+    }
+  }
+
+  function _normalizeScale(value, fallback = '50m') {
+    const allowed = new Set(['10m', '50m', '110m']);
+    return allowed.has(value) ? value : fallback;
+  }
+
+  function _rasterCandidatePaths(setName) {
+    const base = `data/maps/NaturalEarth/${setName}`;
+    return [
+      `${base}/${setName}_50M_SR_W/${setName}_50M_SR_W.tif`,
+      `${base}/${setName}_50M_SR_W/${setName}_50M_SR_W.jpg`,
+      `${base}/${setName}_50M_SR_W/${setName}_50M_SR_W.png`,
+    ];
+  }
+
+  async function _resourceExists(path) {
+    try {
+      const head = await fetch(path, { method: 'HEAD' });
+      if (head.ok) return true;
+    } catch {
+      // fall through to GET
+    }
+    try {
+      const get = await fetch(path, { cache: 'no-store' });
+      return get.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async function _discoverNaturalEarthRasterSets() {
+    if (_rasterSetsDiscovered) return _naturalEarthRasterSets;
+    const sets = [];
+    const candidates = [];
+    for (let i = 1; i <= 9; i += 1) candidates.push(`NE${i}`);
+    for (const setName of candidates) {
+      const paths = _rasterCandidatePaths(setName);
+      for (const path of paths) {
+        // eslint-disable-next-line no-await-in-loop
+        if (await _resourceExists(path)) {
+          sets.push(setName);
+          break;
+        }
+      }
+    }
+    _naturalEarthRasterSets = sets.length ? sets : ['NE1'];
+    _rasterSetsDiscovered = true;
+    _populateGeographicRasterSetOptions();
+    return _naturalEarthRasterSets;
+  }
+
+  function _populateGeographicRasterSetOptions(selectedValue = null) {
+    const sel = $('set-bm-geographic-raster-set');
+    if (!sel) return;
+    const selected = selectedValue || sel.value || _naturalEarthRasterSets[0] || 'NE1';
+    sel.innerHTML = '';
+    for (const setName of _naturalEarthRasterSets) {
+      const opt = document.createElement('option');
+      opt.value = setName;
+      opt.textContent = setName;
+      if (setName === selected) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
   }
 
   // Wire all settings inputs for live update.
@@ -790,14 +996,22 @@ export async function app(opts = {}) {
     _render(); // render default map behind it
   }
 
-  welcomeOverlay?.querySelectorAll('[data-bmsource]').forEach(card => {
+  welcomeOverlay?.querySelectorAll('[data-bmmode]').forEach(card => {
     card.addEventListener('click', () => {
-      const src = card.dataset.bmsource;
+      const mode = card.dataset.bmmode;
       const basemap = layers.find(l => l.type === LAYER_TYPES.BASEMAP);
       if (basemap) {
-        basemap.style.basemapSource = src;
-        // Natural Earth sources use Natural Earth's standard projection
-        if (src !== 'd3') basemap.style.projection = 'geoNaturalEarth1';
+        basemap.style.baseMode = mode || 'globe';
+        if (mode === 'geographic') {
+          basemap.style.projection = 'geoEquirectangular';
+          basemap.style.datum = 'WGS84';
+          basemap.style.geographicSourceType = basemap.style.geographicSourceType || 'raster';
+          basemap.style.geographicRasterSet = basemap.style.geographicRasterSet || 'NE1';
+          basemap.style.basemapSource = `ne${_normalizeScale(basemap.style.geographicVectorScale || '50m').replace('m', '')}`;
+        } else {
+          basemap.style.projection = basemap.style.projection || 'geoNaturalEarth1';
+          basemap.style.basemapSource = basemap.style.basemapSource || 'd3';
+        }
       }
       welcomeOverlay.style.display = 'none';
       _enterLayoutMode();
@@ -828,12 +1042,91 @@ export async function app(opts = {}) {
   const canvasWrapper = $('canvas-wrapper');
   if (canvasWrapper) wireDropZone(canvasWrapper, file => { if (file) _importFile(file); }, { checkContains: true });
 
+  const zoomBox = document.createElement('div');
+  zoomBox.className = 'sx-zoom-box';
+  zoomBox.style.display = 'none';
+  canvasWrapper?.appendChild(zoomBox);
+
   // Space + drag pans the projection center (lon/lat), not the zoom transform.
   let _spaceHeld = false;
+  let _cmdZoomDragging = false;
   let _projectionDragging = false;
   let _lastDragX = 0;
   let _lastDragY = 0;
+  let _cmdZoomStartX = 0;
+  let _cmdZoomStartY = 0;
+  let _cmdZoomCurrentX = 0;
+  let _cmdZoomCurrentY = 0;
   let _statusBeforeSpaceHint = '';
+
+  function _isAltZoomModifier(e) {
+    return !!e.altKey;
+  }
+
+  function _setAltZoomCursorState(ready, dragging = false) {
+    if (!canvasWrapper) return;
+    const on = !!ready && !_spaceHeld;
+    canvasWrapper.classList.toggle('sx-alt-zoom-ready', on);
+    canvasWrapper.classList.toggle('sx-alt-zoom-dragging', on && !!dragging);
+  }
+
+  function _toLocalPoint(e) {
+    const rect = canvasWrapper?.getBoundingClientRect();
+    if (!rect) return null;
+    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+    return { x, y, width: rect.width, height: rect.height };
+  }
+
+  function _updateZoomBox() {
+    if (!_cmdZoomDragging || !zoomBox) return;
+    const x = Math.min(_cmdZoomStartX, _cmdZoomCurrentX);
+    const y = Math.min(_cmdZoomStartY, _cmdZoomCurrentY);
+    const w = Math.abs(_cmdZoomCurrentX - _cmdZoomStartX);
+    const h = Math.abs(_cmdZoomCurrentY - _cmdZoomStartY);
+    zoomBox.style.display = '';
+    zoomBox.style.left = `${x}px`;
+    zoomBox.style.top = `${y}px`;
+    zoomBox.style.width = `${w}px`;
+    zoomBox.style.height = `${h}px`;
+  }
+
+  function _hideZoomBox() {
+    if (zoomBox) zoomBox.style.display = 'none';
+  }
+
+  function _applyBoxZoom(x0, y0, x1, y1, viewportW, viewportH) {
+    const left = Math.min(x0, x1);
+    const right = Math.max(x0, x1);
+    const top = Math.min(y0, y1);
+    const bottom = Math.max(y0, y1);
+    const boxW = right - left;
+    const boxH = bottom - top;
+    if (boxW < 6 || boxH < 6) return;
+
+    const t = renderer.getZoomTransform();
+    const scaleX = viewportW / boxW;
+    const scaleY = viewportH / boxH;
+    const nextK = Math.max(0.5, Math.min(30, t.k * Math.min(scaleX, scaleY)));
+
+    const centerScreenX = (left + right) / 2;
+    const centerScreenY = (top + bottom) / 2;
+    const worldX = (centerScreenX - t.x) / t.k;
+    const worldY = (centerScreenY - t.y) / t.k;
+    const targetX = (viewportW / 2) - (worldX * nextK);
+    const targetY = (viewportH / 2) - (worldY * nextK);
+
+    const target = d3.zoomIdentity.translate(targetX, targetY).scale(nextK);
+    _suppressZoomHistory = true;
+    try {
+      renderer.syncZoomTransform(target);
+    } finally {
+      _suppressZoomHistory = false;
+    }
+    _recordZoomTransform(target, { immediate: true });
+    _updateSelectedGeoJSONStatus(target.k);
+    _queueRender();
+  }
 
   function _getBasemapCenter() {
     return layers.find(l => l.type === LAYER_TYPES.BASEMAP)?.style?.center || [0, 0];
@@ -852,16 +1145,44 @@ export async function app(opts = {}) {
 
   function _restoreStatusAfterSpaceHint() {
     if (!statusStats) return;
-    statusStats.textContent = _statusBeforeSpaceHint || '';
+    statusStats.innerHTML = _statusBeforeSpaceHint || '';
     if (!statusStats.textContent) _updateSelectedGeoJSONStatus();
   }
 
-  function _updateSelectedGeoJSONStatus() {
+  function _activeZoomK() {
+    const t = (_usingCanvas ? canvasRenderer : svgRenderer).getZoomTransform?.();
+    return t?.k || 1;
+  }
+
+  function _appendRasterTierStatus(baseText, zoomK, asHtml = false) {
+    const prefix = baseText ? `${baseText} | ` : '';
+    if (!_isGeographicRasterMode()) return baseText || '';
+    const bm = layers.find(l => l.type === LAYER_TYPES.BASEMAP)?.style || {};
+    const setName = String(bm.geographicRasterSet || 'NE1').toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+    const threshold = Number(bm.geographicRasterSwitchZoom ?? 2.5);
+    const k = Number.isFinite(zoomK) ? zoomK : _activeZoomK();
+    const forcedTier = String(bm.geographicRasterForceTier || 'auto').toLowerCase();
+    const tier = forcedTier === 'hr' ? 'HR' : forcedTier === '50m' ? '50M' : (k >= threshold ? 'HR' : '50M');
+    const forceNote = forcedTier === 'auto' ? '' : ' forced';
+    if (!asHtml) {
+      const text = `Raster ${setName}: ${tier}${forceNote} (zoom ${k.toFixed(2)} / switch ${threshold.toFixed(2)})`;
+      return `${prefix}${text}`;
+    }
+    const tierClass = tier === 'HR' ? 'sx-raster-tier--hr' : 'sx-raster-tier--50m';
+    const forcedClass = forcedTier === 'auto' ? '' : ' sx-raster-tier--forced';
+    const text = `Raster ${setName}: <button type="button" class="sx-raster-tier ${tierClass}${forcedClass}" data-raster-tier-toggle="1" title="Click to force alternate raster tier (Shift-click for auto)">${tier}</button> <span class="sx-raster-zoom">${forceNote}(zoom ${k.toFixed(2)} / switch ${threshold.toFixed(2)})</span>`;
+    return `${prefix}${text}`;
+  }
+
+  function _updateSelectedGeoJSONStatus(zoomK = null) {
     if (!statusStats || _spaceHeld) return;
     const selected = layers.find(l => l.id === selectedId);
     if (!selected || selected.type !== LAYER_TYPES.GEOJSON) {
-      if (statusStats.dataset.mode === 'geojson') {
-        statusStats.textContent = '';
+      if (_isGeographicRasterMode()) {
+        statusStats.innerHTML = _appendRasterTierStatus('', zoomK, true);
+        statusStats.dataset.mode = 'raster';
+      } else if (statusStats.dataset.mode === 'geojson' || statusStats.dataset.mode === 'raster' || statusStats.dataset.mode === 'geojson+raster') {
+        statusStats.innerHTML = '';
         delete statusStats.dataset.mode;
       }
       return;
@@ -871,12 +1192,24 @@ export async function app(opts = {}) {
     if (!stats) return;
 
     if (stats.hiddenByZoom) {
-      statusStats.textContent = `GeoJSON: 0/${stats.totalFeatures} visible (zoom ${stats.zoomScale.toFixed(2)} < ${stats.minZoom.toFixed(2)})`;
+      const text = _appendRasterTierStatus(
+        `GeoJSON: 0/${stats.totalFeatures} visible (zoom ${stats.zoomScale.toFixed(2)} < ${stats.minZoom.toFixed(2)})`,
+        zoomK,
+        _isGeographicRasterMode()
+      );
+      if (_isGeographicRasterMode()) statusStats.innerHTML = text;
+      else statusStats.textContent = text;
     } else {
       const capped = stats.capped ? `, capped at ${stats.maxVisibleFeatures}` : '';
-      statusStats.textContent = `GeoJSON: ${stats.renderedFeatures}/${stats.totalFeatures} visible (${stats.inViewFeatures} in view${capped})`;
+      const text = _appendRasterTierStatus(
+        `GeoJSON: ${stats.renderedFeatures}/${stats.totalFeatures} visible (${stats.inViewFeatures} in view${capped})`,
+        zoomK,
+        _isGeographicRasterMode()
+      );
+      if (_isGeographicRasterMode()) statusStats.innerHTML = text;
+      else statusStats.textContent = text;
     }
-    statusStats.dataset.mode = 'geojson';
+    statusStats.dataset.mode = _isGeographicRasterMode() ? 'geojson+raster' : 'geojson';
   }
 
   function _isEditableTarget(el) {
@@ -890,12 +1223,19 @@ export async function app(opts = {}) {
     if (e.code !== 'Space') return;
     if (_isEditableTarget(e.target)) return;
     if (!_spaceHeld) {
-      _statusBeforeSpaceHint = statusStats?.textContent || '';
+      _statusBeforeSpaceHint = statusStats?.innerHTML || '';
     }
     e.preventDefault();
     _spaceHeld = true;
+    _setAltZoomCursorState(false, false);
     renderer.setSpacePanActive(true);
     _setSpaceHint();
+  });
+
+  window.addEventListener('keydown', e => {
+    if (_isAltZoomModifier(e)) {
+      _setAltZoomCursorState(true, _cmdZoomDragging);
+    }
   });
 
   window.addEventListener('keyup', e => {
@@ -904,10 +1244,52 @@ export async function app(opts = {}) {
     _projectionDragging = false;
     renderer.setSpacePanActive(false);
     _restoreStatusAfterSpaceHint();
+    _setAltZoomCursorState(false, false);
+    _saveState();
+  });
+
+  window.addEventListener('keyup', e => {
+    if (!_isAltZoomModifier(e)) {
+      _setAltZoomCursorState(false, false);
+    }
+  });
+
+  statusStats?.addEventListener('click', e => {
+    const toggle = e.target.closest('[data-raster-tier-toggle]');
+    if (!toggle || !_isGeographicRasterMode()) return;
+    const basemap = layers.find(l => l.type === LAYER_TYPES.BASEMAP);
+    if (!basemap) return;
+    const style = basemap.style || {};
+    const current = String(style.geographicRasterForceTier || 'auto').toLowerCase();
+    if (e.shiftKey) {
+      style.geographicRasterForceTier = 'auto';
+    } else if (current === 'hr') {
+      style.geographicRasterForceTier = '50m';
+    } else if (current === '50m') {
+      style.geographicRasterForceTier = 'hr';
+    } else {
+      const displayed = toggle.textContent?.trim().toUpperCase();
+      style.geographicRasterForceTier = displayed === 'HR' ? '50m' : 'hr';
+    }
+    _updateSelectedGeoJSONStatus();
+    _queueRender();
     _saveState();
   });
 
   canvasWrapper?.addEventListener('pointerdown', e => {
+    if (_isAltZoomModifier(e) && !_spaceHeld) {
+      const p = _toLocalPoint(e);
+      if (!p) return;
+      _cmdZoomDragging = true;
+      _setAltZoomCursorState(true, true);
+      _cmdZoomStartX = _cmdZoomCurrentX = p.x;
+      _cmdZoomStartY = _cmdZoomCurrentY = p.y;
+      _updateZoomBox();
+      canvasWrapper.setPointerCapture?.(e.pointerId);
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (!_spaceHeld) return;
     _projectionDragging = true;
     _lastDragX = e.clientX;
@@ -918,6 +1300,19 @@ export async function app(opts = {}) {
   });
 
   canvasWrapper?.addEventListener('pointermove', e => {
+    _setAltZoomCursorState(_isAltZoomModifier(e), _cmdZoomDragging);
+
+    if (_cmdZoomDragging) {
+      const p = _toLocalPoint(e);
+      if (!p) return;
+      _cmdZoomCurrentX = p.x;
+      _cmdZoomCurrentY = p.y;
+      _updateZoomBox();
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
     if (!_projectionDragging) return;
     const dx = e.clientX - _lastDragX;
     const dy = e.clientY - _lastDragY;
@@ -947,8 +1342,26 @@ export async function app(opts = {}) {
   };
 
   canvasWrapper?.addEventListener('pointerup', _endProjectionDrag);
+  canvasWrapper?.addEventListener('pointerup', e => {
+    if (!_cmdZoomDragging) return;
+    const p = _toLocalPoint(e) || { x: _cmdZoomCurrentX, y: _cmdZoomCurrentY, width: canvasWrapper.clientWidth, height: canvasWrapper.clientHeight };
+    _cmdZoomCurrentX = p.x;
+    _cmdZoomCurrentY = p.y;
+    _applyBoxZoom(_cmdZoomStartX, _cmdZoomStartY, _cmdZoomCurrentX, _cmdZoomCurrentY, p.width, p.height);
+    _cmdZoomDragging = false;
+    _hideZoomBox();
+    _setAltZoomCursorState(_isAltZoomModifier(e), false);
+    e.preventDefault();
+    e.stopPropagation();
+  });
   canvasWrapper?.addEventListener('pointercancel', _endProjectionDrag);
+  canvasWrapper?.addEventListener('pointercancel', () => {
+    _cmdZoomDragging = false;
+    _hideZoomBox();
+    _setAltZoomCursorState(false, false);
+  });
   canvasWrapper?.addEventListener('pointerleave', e => {
+    _setAltZoomCursorState(false, false);
     if (_projectionDragging && !_spaceHeld) _endProjectionDrag(e);
   });
 
@@ -1298,12 +1711,27 @@ export async function app(opts = {}) {
         e.preventDefault(); cmd.exec?.(); return;
       }
     }
+
+    const keyIsZero = e.key === '0' || e.code === 'Digit0';
+    if ((e.metaKey || e.ctrlKey) && keyIsZero) {
+      e.preventDefault();
+      if (e.shiftKey) {
+        $('btn-reset-orientation')?.click();
+      } else {
+        $('btn-reset-zoom')?.click();
+      }
+      return;
+    }
+
     if (e.key === 'Escape') {
       if (treeMapOverlay?.classList.contains('open')) {
         $('btn-tree-map-cancel')?.click();
         return;
       }
       _projectionDragging = false;
+      _cmdZoomDragging = false;
+      _hideZoomBox();
+      _setAltZoomCursorState(false, false);
       _spaceHeld = false;
       renderer.setSpacePanActive(false);
       _restoreStatusAfterSpaceHint();
@@ -1314,7 +1742,17 @@ export async function app(opts = {}) {
   });
 
   // Reset zoom button
-  $('btn-reset-zoom')?.addEventListener('click', () => renderer.resetZoom());
+  $('btn-reset-zoom')?.addEventListener('click', () => {
+    renderer.resetZoom();
+  });
+  $('btn-zoom-back')?.addEventListener('click', () => {
+    if (_zoomHistoryIndex <= 0) return;
+    _applyHistoryTransform(_zoomHistoryIndex - 1);
+  });
+  $('btn-zoom-forward')?.addEventListener('click', () => {
+    if (_zoomHistoryIndex >= _zoomHistory.length - 1) return;
+    _applyHistoryTransform(_zoomHistoryIndex + 1);
+  });
   $('btn-reset-orientation')?.addEventListener('click', async () => {
     const base = layers.find(l => l.type === LAYER_TYPES.BASEMAP);
     if (!base) return;
@@ -1389,6 +1827,8 @@ export async function app(opts = {}) {
   _renderLayerList();
   _showSettingsForLayer(selectedId);
   await _render();
+  _recordZoomTransform(renderer.getZoomTransform(), { immediate: true });
+  _updateZoomNavButtons();
 
   // Open layer panel by default
   _openPanel(layerPanel);

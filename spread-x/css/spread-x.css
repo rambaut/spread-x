@@ -239,6 +239,25 @@
 #map-svg:active,
 #map-canvas:active { cursor: grabbing; }
 
+.sx-zoom-box {
+  position: absolute;
+  border: 1px dashed rgba(122, 201, 255, 0.95);
+  background: rgba(74, 144, 226, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+  pointer-events: none;
+  z-index: 20;
+}
+
+#canvas-wrapper.sx-alt-zoom-ready #map-svg,
+#canvas-wrapper.sx-alt-zoom-ready #map-canvas {
+  cursor: zoom-in;
+}
+
+#canvas-wrapper.sx-alt-zoom-dragging #map-svg,
+#canvas-wrapper.sx-alt-zoom-dragging #map-canvas {
+  cursor: crosshair;
+}
+
 /* ── Toolbar extras ────────────────────────────────────────────────── */
 
 #toolbar-title {
@@ -246,6 +265,43 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 40vw;
+}
+
+#status-stats .sx-raster-tier {
+  display: inline-block;
+  min-width: 2.7em;
+  text-align: center;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 0.05rem 0.42rem;
+  margin: 0 0.12rem;
+  letter-spacing: 0.02em;
+  border: none;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+#status-stats .sx-raster-tier:focus-visible {
+  outline: 2px solid var(--pt-teal, #2aa198);
+  outline-offset: 1px;
+}
+
+#status-stats .sx-raster-tier--50m {
+  color: #3e2b00;
+  background: #f4c15d;
+}
+
+#status-stats .sx-raster-tier--hr {
+  color: #123f1f;
+  background: #74d99a;
+}
+
+#status-stats .sx-raster-tier--forced {
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+#status-stats .sx-raster-zoom {
+  opacity: 0.72;
 }
 
 /* ── Custom dropdown (add-layer menu) ──────────────────────────────── */

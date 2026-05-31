@@ -14,25 +14,15 @@ function _buildWelcomeOverlay() {
       <p>Choose a base map to begin</p>
     </div>
     <div class="sx-welcome-cards">
-      <button class="sx-bm-card" data-bmsource="d3">
+      <button class="sx-bm-card" data-bmmode="globe">
         <i class="bi bi-globe"></i>
-        <strong>D3 World Atlas</strong>
-        <span>Flexible D3 geo projections · fetched from CDN</span>
+        <strong>Globe</strong>
+        <span>Current globe rendering with D3 projections</span>
       </button>
-      <button class="sx-bm-card" data-bmsource="ne110">
+      <button class="sx-bm-card" data-bmmode="geographic">
         <i class="bi bi-map"></i>
-        <strong>Natural Earth 110m</strong>
-        <span>Overview · ideal for world-scale maps</span>
-      </button>
-      <button class="sx-bm-card" data-bmsource="ne50">
-        <i class="bi bi-map"></i>
-        <strong>Natural Earth 50m</strong>
-        <span>Regional / continental detail</span>
-      </button>
-      <button class="sx-bm-card" data-bmsource="ne10">
-        <i class="bi bi-map"></i>
-        <strong>Natural Earth 10m</strong>
-        <span>High detail · country / local maps</span>
+        <strong>Natural Earth Geographic</strong>
+        <span>WGS84 geographic mode with raster or vector Natural Earth maps</span>
       </button>
     </div>
   </div>
@@ -115,6 +105,16 @@ function _buildSettingsPanel() {
     <!-- ── Base map ── -->
     <div id="settings-basemap" class="sx-settings-section" style="display:none">
       <h3><i class="bi bi-globe-americas"></i> Base Map</h3>
+
+      <div class="sx-setting-row">
+        <label for="set-bm-mode">Base map mode</label>
+        <select id="set-bm-mode" class="form-select form-select-sm sx-setting-input">
+          <option value="globe">Globe</option>
+          <option value="geographic">Natural Earth Geographic (WGS84)</option>
+        </select>
+      </div>
+
+      <div id="settings-bm-globe-group">
 
       <div class="sx-setting-row">
         <label for="set-bm-projection">Projection</label>
@@ -303,6 +303,82 @@ function _buildSettingsPanel() {
         <label for="set-bm-globe-outline-sw">Outline width</label>
         <input type="range" id="set-bm-globe-outline-sw" class="form-range" min="0" max="1.5" step="0.05" value="0.5" />
       </div>
+      </div>
+
+      <div id="settings-bm-geographic-group" style="display:none">
+        <hr />
+        <h3><i class="bi bi-map"></i> Natural Earth Geographic</h3>
+        <div class="sx-setting-row">
+          <label>Datum</label>
+          <input type="text" class="form-control form-control-sm sx-setting-input" value="WGS84" readonly />
+        </div>
+        <div class="sx-setting-row">
+          <label for="set-bm-geographic-source">Source</label>
+          <select id="set-bm-geographic-source" class="form-select form-select-sm sx-setting-input">
+            <option value="raster">Natural Earth Raster</option>
+            <option value="vector">Natural Earth Vector</option>
+          </select>
+        </div>
+
+        <div id="settings-bm-geographic-raster-group">
+          <div class="sx-setting-row">
+            <label for="set-bm-geographic-raster-set">Raster set</label>
+            <select id="set-bm-geographic-raster-set" class="form-select form-select-sm sx-setting-input">
+              <option value="NE1">NE1</option>
+            </select>
+          </div>
+          <div class="sx-setting-row">
+            <small class="text-muted">Automatically switches from 50M to HR raster as you zoom in.</small>
+          </div>
+        </div>
+
+        <div id="settings-bm-geographic-vector-group" style="display:none">
+          <div class="sx-setting-row">
+            <label for="set-bm-geographic-vector-scale">Vector land scale</label>
+            <select id="set-bm-geographic-vector-scale" class="form-select form-select-sm sx-setting-input">
+              <option value="110m">110m</option>
+              <option value="50m">50m</option>
+              <option value="10m">10m</option>
+            </select>
+          </div>
+          <div class="sx-setting-row">
+            <label for="set-bm-geographic-ocean">Ocean colour</label>
+            <input type="color" id="set-bm-geographic-ocean" class="pt-palette-color" value="#0d2f40" />
+          </div>
+          <div class="sx-setting-row">
+            <label for="set-bm-geographic-land">Land colour</label>
+            <input type="color" id="set-bm-geographic-land" class="pt-palette-color" value="#9aa876" />
+          </div>
+        </div>
+
+        <hr />
+        <div class="sx-setting-row">
+          <label>
+            <input type="checkbox" id="set-bm-geographic-countries-on" class="form-check-input" checked />
+            Show country polygons
+          </label>
+        </div>
+        <div class="sx-setting-row">
+          <label for="set-bm-geographic-country-scale">Country scale</label>
+          <select id="set-bm-geographic-country-scale" class="form-select form-select-sm sx-setting-input">
+            <option value="110m">110m</option>
+            <option value="50m">50m</option>
+            <option value="10m">10m</option>
+          </select>
+        </div>
+        <div class="sx-setting-row">
+          <label for="set-bm-geographic-country-stroke">Country colour</label>
+          <input type="color" id="set-bm-geographic-country-stroke" class="pt-palette-color" value="#3e3e3e" />
+        </div>
+        <div class="sx-setting-row">
+          <label for="set-bm-geographic-country-width">Country stroke width</label>
+          <input type="range" id="set-bm-geographic-country-width" class="form-range" min="0" max="2" step="0.05" value="0.45" />
+        </div>
+        <div class="sx-setting-row">
+          <label for="set-bm-geographic-country-opacity">Country opacity</label>
+          <input type="range" id="set-bm-geographic-country-opacity" class="form-range" min="0" max="1" step="0.05" value="0.65" />
+        </div>
+      </div>
     </div>
 
     <!-- ── Map frame ── -->
@@ -477,6 +553,12 @@ function _buildAppToolbar() {
         <i class="bi bi-aspect-ratio me-1"></i>Layout
       </button>
       <div class="pt-toolbar-sep"></div>
+      <button id="btn-zoom-back" class="btn btn-sm btn-outline-secondary" title="Previous zoom" disabled>
+        <i class="bi bi-arrow-left-circle"></i>
+      </button>
+      <button id="btn-zoom-forward" class="btn btn-sm btn-outline-secondary" title="Next zoom" disabled>
+        <i class="bi bi-arrow-right-circle"></i>
+      </button>
       <button id="btn-reset-zoom" class="btn btn-sm btn-outline-secondary" title="Reset zoom">
         <i class="bi bi-fullscreen"></i>
       </button>
