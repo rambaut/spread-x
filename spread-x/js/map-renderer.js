@@ -189,7 +189,7 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
         .attr('opacity', layer.opacity);
 
       switch (layer.type) {
-        case LAYER_TYPES.BASEMAP: await _renderBasemap(g, layer);  break;
+        case LAYER_TYPES.BASEMAP: await _renderBasemap(g, layer, oceansLayer?.style);  break;
         case LAYER_TYPES.GEOJSON:       _renderGeoJSON(g, layer);  break;
         case LAYER_TYPES.POINTS:        _renderPoints(g, layer);   break;
         case LAYER_TYPES.TREE:          _renderTree(g, layer);     break;
@@ -308,7 +308,7 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
 
   /* ── layer renderers ─────────────────────────────────────────────── */
 
-  async function _renderBasemap(g, layer) {
+  async function _renderBasemap(g, layer, oceansStyle = null) {
     const s = layer.style;
     const showGlobe = s.showGlobe !== false;
     const oceanFill = s.oceanFill;
@@ -414,6 +414,12 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
     } catch (err) {
       console.warn('Failed to load map outline:', err);
     }
+  }
+
+  function _isOceansLayer(layer) {
+    if (!layer || layer.type !== LAYER_TYPES.GEOJSON) return false;
+    const n = (layer.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    return n === 'oceans' || n === 'oceanmask';
   }
 
   function _renderGeoJSON(g, layer) {

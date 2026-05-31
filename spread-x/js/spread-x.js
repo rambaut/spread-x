@@ -502,6 +502,20 @@ export async function app(opts = {}) {
         $('set-gj-fill-op').value = s.fillOpacity;
         $('set-gj-stroke').value  = s.stroke;
         $('set-gj-sw').value      = s.strokeWidth;
+        $('set-gj-perf-auto').checked = s.autoPerf !== false;
+        $('set-gj-min-zoom').value    = Number.isFinite(+s.minZoom) ? +s.minZoom : 2;
+        $('set-gj-max-visible').value = Number.isFinite(+s.maxVisible) ? +s.maxVisible : 2000;
+        $('set-gj-simplify').value    = Number.isFinite(+s.simplify) ? +s.simplify : 0;
+        _syncOceanLayerUI(layer);
+        _syncGeoJSONPerfUI();
+        break;
+      case LAYER_TYPES.FRAME:
+        $('set-fr-aspect').value  = s.aspectPreset;
+        $('set-fr-fill-on').checked = s.showFill !== false;
+        $('set-fr-fill').value    = s.fill;
+        $('set-fr-fill-op').value = s.fillOpacity;
+        $('set-fr-stroke').value  = s.stroke;
+        $('set-fr-sw').value      = s.strokeWidth;
         break;
       case LAYER_TYPES.FRAME:
         $('set-fr-aspect').value  = s.aspectPreset;
@@ -571,6 +585,26 @@ export async function app(opts = {}) {
         s.fillOpacity = +$('set-gj-fill-op')?.value;
         s.stroke      = $('set-gj-stroke')?.value;
         s.strokeWidth = +$('set-gj-sw')?.value;
+        s.autoPerf    = $('set-gj-perf-auto')?.checked;
+        s.minZoom     = +$('set-gj-min-zoom')?.value;
+        s.maxVisible  = +$('set-gj-max-visible')?.value;
+        s.simplify    = +$('set-gj-simplify')?.value;
+        if (_isOceansLayer(layer)) {
+          s.oceanFill = $('set-oc-ocean')?.value;
+          s.fill = s.oceanFill;
+          s.landFill = $('set-oc-land')?.value;
+          s.landBoundaryStroke = $('set-oc-boundary')?.value;
+          s.landBoundaryWidth = +$('set-oc-boundary-sw')?.value;
+        }
+        _syncGeoJSONPerfUI();
+        break;
+      case LAYER_TYPES.FRAME:
+        s.aspectPreset = $('set-fr-aspect')?.value;
+        s.showFill     = $('set-fr-fill-on')?.checked;
+        s.fill         = $('set-fr-fill')?.value;
+        s.fillOpacity  = +$('set-fr-fill-op')?.value;
+        s.stroke       = $('set-fr-stroke')?.value;
+        s.strokeWidth  = +$('set-fr-sw')?.value;
         break;
       case LAYER_TYPES.FRAME:
         s.aspectPreset = $('set-fr-aspect')?.value;
