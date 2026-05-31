@@ -2,7 +2,42 @@
 //
 // Builds HTML strings using pearcore-ui.js global helpers, then
 // auto-injects into the DOM.  Must be loaded after pearcore-ui.js.
+// ── Welcome / base-map selection overlay ────────────────────────────────────
 
+function _buildWelcomeOverlay() {
+  return `
+<div id="welcome-overlay" class="sx-welcome-overlay" style="display:none">
+  <div class="sx-welcome-dialog">
+    <div class="sx-welcome-header">
+      <i class="bi bi-globe-americas"></i>
+      <h1>SPREAD-X</h1>
+      <p>Choose a base map to begin</p>
+    </div>
+    <div class="sx-welcome-cards">
+      <button class="sx-bm-card" data-bmsource="d3">
+        <i class="bi bi-globe"></i>
+        <strong>D3 World Atlas</strong>
+        <span>Flexible D3 geo projections · fetched from CDN</span>
+      </button>
+      <button class="sx-bm-card" data-bmsource="ne110">
+        <i class="bi bi-map"></i>
+        <strong>Natural Earth 110m</strong>
+        <span>Overview · ideal for world-scale maps</span>
+      </button>
+      <button class="sx-bm-card" data-bmsource="ne50">
+        <i class="bi bi-map"></i>
+        <strong>Natural Earth 50m</strong>
+        <span>Regional / continental detail</span>
+      </button>
+      <button class="sx-bm-card" data-bmsource="ne10">
+        <i class="bi bi-map"></i>
+        <strong>Natural Earth 10m</strong>
+        <span>High detail · country / local maps</span>
+      </button>
+    </div>
+  </div>
+</div>`;
+}
 // ── Layer panel (left) ────────────────────────────────────────────────────
 
 function _buildLayerPanel() {
@@ -15,8 +50,13 @@ function _buildLayerPanel() {
       <button id="btn-layer-close" title="Close">&times;</button>
     </div>
   </div>
-  <div class="sx-panel-body" style="display:flex;flex-direction:column">
-    <div id="layer-list" class="sx-layer-list" style="flex:1;overflow-y:auto"></div>
+  <div class="sx-panel-body" style="display:flex;flex-direction:column">    <!-- Standard NE layers section — shown in Layout Mode only -->
+    <div id="layout-std-layers" class="sx-layout-std-layers" style="display:none">
+      <div class="sx-std-layers-header">
+        <i class="bi bi-stack me-1"></i>Add Standard Layer
+      </div>
+      <div id="std-layers-list" class="sx-std-layers-list"></div>
+    </div>    <div id="layer-list" class="sx-layer-list" style="flex:1;overflow-y:auto"></div>
     <div class="sx-layer-controls">
       <div class="btn-group btn-group-sm">
         <button id="btn-add-layer" class="btn btn-outline-secondary" title="Add layer">
@@ -198,64 +238,110 @@ function _buildSettingsPanel() {
         </select>
       </div>
       <div class="sx-setting-row">
-        <label for="set-bm-outline">Outline</label>
-        <select id="set-bm-outline" class="form-select form-select-sm sx-setting-input">
-          <option value="countries-110m">Countries (110m)</option>
-          <option value="countries-50m">Countries (50m)</option>
-          <option value="land-110m">Land only (110m)</option>
-          <option value="land-50m">Land only (50m)</option>
-          <option value="none">None</option>
-        </select>
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-ocean">Ocean</label>
-        <input type="color" id="set-bm-ocean" class="pt-palette-color" value="#02292e" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-land">Land fill</label>
-        <input type="color" id="set-bm-land" class="pt-palette-color" value="#1a3a2a" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-land-stroke">Land stroke</label>
-        <input type="color" id="set-bm-land-stroke" class="pt-palette-color" value="#4a8a5a" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-land-sw">Stroke width</label>
-        <input type="range" id="set-bm-land-sw" class="form-range" min="0" max="3" step="0.1" value="0.5" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-border">Border stroke</label>
-        <input type="color" id="set-bm-border" class="pt-palette-color" value="#3a6a4a" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-border-sw">Border width</label>
-        <input type="range" id="set-bm-border-sw" class="form-range" min="0" max="2" step="0.1" value="0.3" />
+        <label for="set-bm-bg">Background</label>
+        <input type="color" id="set-bm-bg" class="pt-palette-color" value="#ffffff" />
       </div>
       <div class="sx-setting-row">
         <label>
           <input type="checkbox" id="set-bm-grat" class="form-check-input" checked />
-          Graticule
+          Reticule (graticule)
         </label>
       </div>
       <div class="sx-setting-row">
-        <label for="set-bm-grat-step">Step (°)</label>
+        <label for="set-bm-grat-step">Reticule step (°)</label>
         <input type="range" id="set-bm-grat-step" class="form-range" min="5" max="30" step="5" value="10" />
       </div>
       <div class="sx-setting-row">
-        <label for="set-bm-grat-stroke">Graticule colour</label>
+        <label for="set-bm-grat-stroke">Reticule colour</label>
         <input type="color" id="set-bm-grat-stroke" class="pt-palette-color" value="#ffffff" />
       </div>
       <div class="sx-setting-row">
-        <label for="set-bm-grat-opacity">Graticule opacity</label>
+        <label for="set-bm-grat-opacity">Reticule opacity</label>
         <input type="range" id="set-bm-grat-opacity" class="form-range" min="0" max="0.5" step="0.02" value="0.1" />
       </div>
       <div class="sx-setting-row">
-        <label for="set-bm-outline-stroke">Globe outline</label>
-        <input type="color" id="set-bm-outline-stroke" class="pt-palette-color" value="#4a8a5a" />
+        <label for="set-bm-proj-boundary">Projection boundary</label>
+        <input type="color" id="set-bm-proj-boundary" class="pt-palette-color" value="#4a8a5a" />
       </div>
       <div class="sx-setting-row">
-        <label for="set-bm-outline-sw">Outline width</label>
-        <input type="range" id="set-bm-outline-sw" class="form-range" min="0" max="3" step="0.1" value="1" />
+        <label for="set-bm-proj-boundary-sw">Projection boundary width</label>
+        <input type="range" id="set-bm-proj-boundary-sw" class="form-range" min="0" max="1.5" step="0.05" value="1" />
+      </div>
+      <hr />
+      <h3><i class="bi bi-globe-americas"></i> Globe</h3>
+      <div class="sx-setting-row">
+        <label>
+          <input type="checkbox" id="set-bm-globe-on" class="form-check-input" checked />
+          Show globe land
+        </label>
+      </div>
+      <div class="sx-setting-row">
+        <label for="set-bm-water">Water</label>
+        <input type="color" id="set-bm-water" class="pt-palette-color" value="#02292e" />
+      </div>
+      <div class="sx-setting-row">
+        <label for="set-bm-land">Land</label>
+        <input type="color" id="set-bm-land" class="pt-palette-color" value="#1a3a2a" />
+      </div>
+      <div class="sx-setting-row">
+        <label>
+          <input type="checkbox" id="set-bm-land-boundaries" class="form-check-input" checked />
+          Land boundaries
+        </label>
+      </div>
+      <div class="sx-setting-row">
+        <label>
+          <input type="checkbox" id="set-bm-country-boundaries" class="form-check-input" checked />
+          Country boundaries
+        </label>
+      </div>
+      <div class="sx-setting-row">
+        <label for="set-bm-globe-outline">Outlines</label>
+        <input type="color" id="set-bm-globe-outline" class="pt-palette-color" value="#4a8a5a" />
+      </div>
+      <div class="sx-setting-row">
+        <label for="set-bm-globe-outline-sw">Outline width</label>
+        <input type="range" id="set-bm-globe-outline-sw" class="form-range" min="0" max="1.5" step="0.05" value="0.5" />
+      </div>
+    </div>
+
+    <!-- ── Map frame ── -->
+    <div id="settings-frame" class="sx-settings-section" style="display:none">
+      <h3><i class="bi bi-bounding-box-circles"></i> Map Frame</h3>
+      <div class="sx-setting-row">
+        <label for="set-fr-aspect">Aspect ratio</label>
+        <select id="set-fr-aspect" class="form-select form-select-sm sx-setting-input">
+          <option value="square">1:1 (Square)</option>
+          <option value="a4Portrait">A4 Portrait (210:297)</option>
+          <option value="a4Landscape">A4 Landscape (297:210)</option>
+          <option value="slideStandard">Slide Standard (4:3)</option>
+          <option value="slideWide">Slide Wide (16:9)</option>
+        </select>
+      </div>
+      <div class="sx-setting-row">
+        <label>
+          <input type="checkbox" id="set-fr-fill-on" class="form-check-input" checked />
+          Background fill
+        </label>
+      </div>
+      <div class="sx-setting-row">
+        <label for="set-fr-fill">Fill colour</label>
+        <input type="color" id="set-fr-fill" class="pt-palette-color" value="#ffffff" />
+      </div>
+      <div class="sx-setting-row">
+        <label for="set-fr-fill-op">Fill opacity</label>
+        <input type="range" id="set-fr-fill-op" class="form-range" min="0" max="1" step="0.05" value="1" />
+      </div>
+      <div class="sx-setting-row">
+        <label for="set-fr-stroke">Boundary stroke</label>
+        <input type="color" id="set-fr-stroke" class="pt-palette-color" value="#d8d8d8" />
+      </div>
+      <div class="sx-setting-row">
+        <label for="set-fr-sw">Boundary width</label>
+        <input type="range" id="set-fr-sw" class="form-range" min="0.2" max="2.5" step="0.05" value="1.5" />
+      </div>
+      <div class="sx-setting-row">
+        <small class="text-muted">A fixed inner margin is applied for now.</small>
       </div>
     </div>
 
@@ -276,7 +362,7 @@ function _buildSettingsPanel() {
       </div>
       <div class="sx-setting-row">
         <label for="set-gj-sw">Stroke width</label>
-        <input type="range" id="set-gj-sw" class="form-range" min="0" max="5" step="0.25" value="1" />
+        <input type="range" id="set-gj-sw" class="form-range" min="0" max="2" step="0.05" value="1" />
       </div>
     </div>
 
@@ -301,7 +387,7 @@ function _buildSettingsPanel() {
       </div>
       <div class="sx-setting-row">
         <label for="set-pt-sw">Stroke width</label>
-        <input type="range" id="set-pt-sw" class="form-range" min="0" max="4" step="0.25" value="1" />
+        <input type="range" id="set-pt-sw" class="form-range" min="0" max="2" step="0.05" value="1" />
       </div>
       <div class="sx-setting-row">
         <label for="set-pt-label">Label field</label>
@@ -331,7 +417,7 @@ function _buildSettingsPanel() {
       </div>
       <div class="sx-setting-row">
         <label for="set-tr-width">Branch width</label>
-        <input type="range" id="set-tr-width" class="form-range" min="0.5" max="5" step="0.25" value="1.5" />
+        <input type="range" id="set-tr-width" class="form-range" min="0.2" max="2.5" step="0.05" value="1.5" />
       </div>
       <div class="sx-setting-row">
         <label for="set-tr-op">Branch opacity</label>
@@ -387,6 +473,10 @@ function _buildAppToolbar() {
     centerHTML: `
       <span id="toolbar-title" class="text-muted" style="font-size:0.85rem">SPREAD-X</span>`,
     rightHTML: `
+      <button id="btn-layout-mode" class="btn btn-sm btn-outline-info" title="Toggle Layout Mode">
+        <i class="bi bi-aspect-ratio me-1"></i>Layout
+      </button>
+      <div class="pt-toolbar-sep"></div>
       <button id="btn-reset-zoom" class="btn btn-sm btn-outline-secondary" title="Reset zoom">
         <i class="bi bi-fullscreen"></i>
       </button>
@@ -410,7 +500,8 @@ function _buildMapContainer() {
   return `
 <div id="canvas-container">
   <div id="canvas-wrapper">
-    <svg id="map-svg"></svg>
+    <canvas id="map-canvas" style="display:block;position:absolute;top:0;left:0;"></canvas>
+    <svg id="map-svg" style="display:none;position:absolute;top:0;left:0;"></svg>
   </div>
 </div>`;
 }
@@ -526,6 +617,7 @@ function buildAppHTML() {
     _buildAppStatusBar(),
     _buildAppModals(),
     _buildAppHelpAbout(),
+    _buildWelcomeOverlay(),
   ].join('\n');
 }
 

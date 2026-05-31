@@ -48,12 +48,21 @@ export function detectFileType(text, filename) {
 
 /**
  * Convert a TopoJSON or GeoJSON string/object into a GeoJSON FeatureCollection.
+ *
+ * Options:
+ * - objectName: select a named TopoJSON object instead of the first one.
  */
-export function parseGeoData(input, topojson) {
+export function parseGeoData(input, topojson, options = {}) {
   const json = typeof input === 'string' ? JSON.parse(input) : input;
 
   if (json.type === 'Topology') {
-    const key = Object.keys(json.objects)[0];
+    const keys = Object.keys(json.objects || {});
+    const key = options.objectName && json.objects?.[options.objectName]
+      ? options.objectName
+      : keys[0];
+    if (!key) {
+      throw new Error('TopoJSON contains no objects');
+    }
     return topojson.feature(json, json.objects[key]);
   }
 
