@@ -16,30 +16,36 @@
  * quality / interactivity advantages matter.
  */
 
-import { LAYER_TYPES, MAP_OUTLINES, FRAME_ASPECTS } from './layers.js';
+import { LAYER_TYPES, MAP_OUTLINES } from './layers.js';
+import { computeFrameRect } from './core/frame-geometry.js';
+import { pickTopoObjectKey } from './core/topology-utils.js';
+import {
+  geojsonRenderPolicy as _geojsonRenderPolicyShared,
+  getSimplifiedLayerData as _getSimplifiedLayerDataShared,
+  resolveLayerGeoJSON as _resolveLayerGeoJSONShared,
+} from './core/geojson-layer-utils.js';
+import {
+  basemapOutlineIds as _sharedBasemapOutlineIds,
+  chooseGeographicRasterPath as _sharedChooseGeographicRasterPath,
+  clampLatitude as _sharedClampLatitude,
+  computeGeographicImageRect as _sharedComputeGeographicImageRect,
+  fillPathEvenOdd as _sharedFillPathEvenOdd,
+  isProjectionDiscontinuous as _sharedIsProjectionDiscontinuous,
+  makeProjection as _makeProjection,
+  normalizeNaturalEarthScale as _sharedNormalizeScale,
+  prepareForSeamClipping as _sharedPrepareForSeamClipping,
+  wrapLongitude as _sharedWrapLongitude,
+} from './core/renderer-basemap-utils.js';
+import {
+  createMutableCacheState,
+  createRasterImageLoader,
+  createTopologyOutlineFetcher,
+} from './core/renderer-cache-services.js';
+import { drawCanvasBasemapLayer, drawCanvasGeoJsonLayer } from './renderers/canvas-basemap-geojson-adapters.js';
+import { drawCanvasPointsLayer, drawCanvasTreeLayer } from './renderers/canvas-layer-adapters.js';
 
 /** Zoom scale at which to hand off rendering to the SVG renderer. */
 export const CANVAS_TO_SVG_THRESHOLD = 8;
-
-/* ── Shared projection factory (mirrors map-renderer.js) ─────────── */
-
-function _makeProjection(d3, projId, width, height, center, rotate, frameRect) {
-  const factory = d3[projId] || d3.geoNaturalEarth1;
-  const proj = factory();
-  const cx = Number(center?.[0] || 0);
-  const cy = Number(center?.[1] || 0);
-  const rx = Number(rotate?.[0] || 0);
-  const ry = Number(rotate?.[1] || 0);
-  const rz = Number(rotate?.[2] || 0);
-  proj.rotate([rx - cx, ry - cy, rz]);
-  const fitW = frameRect?.width || width;
-  const fitH = frameRect?.height || height;
-  proj.fitSize([fitW, fitH], { type: 'Sphere' });
-  if (frameRect) {
-    proj.translate([frameRect.x + frameRect.width / 2, frameRect.y + frameRect.height / 2]);
-  }
-  return proj;
-}
 
 /* ── Renderer ─────────────────────────────────────────────────────── */
 
@@ -69,11 +75,12 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
   const _featureBoundsCache  = new WeakMap();
   const _resolvedGeoDataCache = new WeakMap();
   const _geojsonLayerCache   = new WeakMap();
-  const _topoCache = {};
-  const _rasterImageCache = new Map();
-  const _rasterImageFailures = new Set();
-  let _basemapCache = null; // { stamp, projId, land, countryMesh }
-  let _graticuleCache = null; // { step, graticule }
+  const _outlineFetcher = createTopologyOutlineFetcher({ mapOutlines: MAP_OUTLINES, fetchImpl: fetch });
+  const _rasterLoader = createRasterImageLoader();
+  const _cacheState = createMutableCacheState({
+    basemapCache: null,
+    graticuleCache: null,
+  });
 
   /* ── D3 zoom ──────────────────────────────────────────────────── */
 
@@ -155,8 +162,8 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
     if (!geoA || !geoB) return false;
     const cur = base.style.center || [0, 0];
     base.style.center = [
-      _wrapLongitude((cur[0] || 0) + (geoB[0] - geoA[0])),
-      _clampLatitude((cur[1] || 0) + (geoB[1] - geoA[1])),
+      _sharedWrapLongitude((cur[0] || 0) + (geoB[0] - geoA[0])),
+      _sharedClampLatitude((cur[1] || 0) + (geoB[1] - geoA[1])),
     ];
     return true;
   }
@@ -172,8 +179,8 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
     if (!geoA || !geoB) return false;
     const cur = base.style.center || [0, 0];
     base.style.center = [
-      _wrapLongitude((cur[0] || 0) + (geoB[0] - geoA[0])),
-      _clampLatitude(cur[1] || 0),
+      _sharedWrapLongitude((cur[0] || 0) + (geoB[0] - geoA[0])),
+      _sharedClampLatitude(cur[1] || 0),
     ];
     return true;
   }
@@ -195,7 +202,7 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
 
     const base       = _layers.find(l => l.type === LAYER_TYPES.BASEMAP);
     const frameLayer = _layers.find(l => l.type === LAYER_TYPES.FRAME);
-    const frameRect  = _computeFrameRect(_width, _height, frameLayer?.style);
+    const frameRect  = computeFrameRect(_width, _height, frameLayer?.style);
     _currentFrameRect = frameRect;
 
     const baseMode = base?.style?.baseMode || 'globe';
@@ -285,376 +292,65 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
   /* ── layer draw functions ─────────────────────────────────────── */
 
   async function _drawBasemap(ctx, layer, k) {
-    const s = layer.style;
-    if ((s.baseMode || 'globe') === 'geographic') {
-      await _drawGeographicBasemap(ctx, s, k, layer);
-      return;
-    }
-
-    const showGlobe            = s.showGlobe !== false;
-    const showLandBoundaries   = showGlobe && s.showLandBoundaries !== false;
-    const showCountryBoundaries = showGlobe && s.showCountryBoundaries !== false;
-    const oceanFill            = s.oceanFill;
-    const landFill             = s.landFill;
-    const landStroke           = s.landBoundaryStroke || s.landStroke || '#4a8a5a';
-    const landWidth            = (s.landBoundaryWidth ?? s.landStrokeWidth ?? 0.5) / k;
-    const outlineStroke        = s.projectionBoundaryStroke || s.outlineStroke || '#4a8a5a';
-    const outlineWidth         = (s.projectionBoundaryWidth ?? s.outlineStrokeWidth ?? 1) / k;
-
-    const ctxPath = d3.geoPath(_projection, ctx);
-
-    // Graticule (drawn before sphere fill so it appears under ocean)
-    if (s.showGraticule) {
-      const step = s.graticuleStep || 10;
-      if (!_graticuleCache || _graticuleCache.step !== step) {
-        _graticuleCache = { step, graticule: d3.geoGraticule().step([step, step])() };
-      }
-      ctx.save();
-      ctx.beginPath();
-      ctxPath(_graticuleCache.graticule);
-      ctx.strokeStyle = s.graticuleStroke || '#ffffff';
-      ctx.lineWidth   = 0.5 / k;
-      ctx.lineJoin    = 'round';
-      ctx.lineCap     = 'round';
-      ctx.globalAlpha *= (s.graticuleOpacity ?? 0.1);
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    // Ocean sphere fill
-    ctx.save();
-    ctx.beginPath();
-    ctxPath({ type: 'Sphere' });
-    if (oceanFill) { ctx.fillStyle = oceanFill; ctx.fill(); }
-    ctx.strokeStyle = outlineStroke;
-    ctx.lineWidth   = outlineWidth;
-    ctx.lineJoin    = 'round';
-    ctx.lineCap     = 'round';
-    ctx.stroke();
-    ctx.restore();
-
-    // Land topology (cached across renders unless projection or source changes)
-    const bsrc = s.basemapSource || 'd3';
-    const [landId, countriesId] = _basemapOutlineIds(bsrc);
-    try {
-      const [landTopo, countriesTopo] = await Promise.all([
-        _fetchOutline(landId),
-        _fetchOutline(countriesId),
-      ]);
-
-      if (_basemapCache?.stamp !== _projectionStamp || _basemapCache?.projId !== _projId || _basemapCache?.src !== bsrc) {
-        let land = null;
-        let countryMesh = null;
-        if (landTopo) {
-          const landKey = _pickTopoObjectKey(landTopo, ['land']);
-          if (landKey) {
-            land = _prepareForSeamClipping(topojson.feature(landTopo, landTopo.objects[landKey]));
-          }
-        }
-        if (countriesTopo) {
-          const countriesKey = _pickTopoObjectKey(countriesTopo, ['countries', 'country', 'admin0', 'ne_admin_0_countries']);
-          if (countriesKey) {
-            countryMesh = _prepareForSeamClipping(
-              topojson.mesh(countriesTopo, countriesTopo.objects[countriesKey], (a, b) => a !== b)
-            );
-          }
-        }
-        _basemapCache = { stamp: _projectionStamp, projId: _projId, src: bsrc, land, countryMesh };
-      }
-
-      const { land, countryMesh } = _basemapCache;
-
-      if (land && showGlobe) {
-        ctx.save();
-        ctx.beginPath();
-        ctxPath(land);
-        ctx.fillStyle = landFill;
-        _fillPathEvenOdd(ctx);
-        ctx.restore();
-      }
-
-      if (land && showLandBoundaries) {
-        ctx.save();
-        ctx.beginPath();
-        ctxPath(land);
-        ctx.strokeStyle = landStroke;
-        ctx.lineWidth   = landWidth;
-        ctx.lineJoin    = 'round';
-        ctx.lineCap     = 'round';
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      if (showCountryBoundaries && countryMesh) {
-        ctx.save();
-        ctx.beginPath();
-        ctxPath(countryMesh);
-        ctx.strokeStyle = landStroke;
-        ctx.lineWidth   = landWidth;
-        ctx.lineJoin    = 'round';
-        ctx.lineCap     = 'round';
-        ctx.stroke();
-        ctx.restore();
-      }
-    } catch (err) {
-      console.warn('Failed to load basemap topology:', err);
-    }
-  }
-
-  async function _drawGeographicBasemap(ctx, style, k, layer = null) {
-    const sourceType = style.geographicSourceType || 'raster';
-    const oceanFill = style.geographicOceanFill || style.oceanFill || '#0d2f40';
-    const ctxPath = d3.geoPath(_projection, ctx);
-
-    ctx.save();
-    ctx.beginPath();
-    ctxPath({ type: 'Sphere' });
-    ctx.fillStyle = oceanFill;
-    ctx.fill();
-    ctx.strokeStyle = style.projectionBoundaryStroke || style.outlineStroke || '#4a8a5a';
-    ctx.lineWidth = (style.projectionBoundaryWidth ?? style.outlineStrokeWidth ?? 1) / k;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.stroke();
-    ctx.restore();
-
-    if (sourceType === 'raster') {
-      const rasterUrl = _chooseGeographicRasterPath(style, _currentTransform?.k || 1);
-      const rect = _computeGeographicImageRect();
-      if (rasterUrl && rect) {
-        const img = await _loadRasterImage(rasterUrl);
-        if (img) {
-          ctx.save();
-          ctx.globalAlpha *= 1;
-          ctx.drawImage(img, rect.x, rect.y, rect.width, rect.height);
-          ctx.restore();
-        }
-      }
-    } else {
-      const scale = _normalizeScale(style.geographicVectorScale, '50m');
-      const landTopo = await _fetchOutline(`ne-land-${scale}`);
-      if (landTopo) {
-        const key = _pickTopoObjectKey(landTopo, ['land']);
-        if (key) {
-          const land = _prepareForSeamClipping(topojson.feature(landTopo, landTopo.objects[key]));
-          ctx.save();
-          ctx.beginPath();
-          ctxPath(land);
-          ctx.fillStyle = style.geographicLandFill || '#9aa876';
-          _fillPathEvenOdd(ctx);
-          ctx.restore();
-        }
-      }
-    }
-
-    if (style.geographicShowCountries !== false) {
-      const scale = _normalizeScale(style.geographicCountryScale || style.geographicVectorScale, '50m');
-      const countriesTopo = await _fetchOutline(`ne-countries-${scale}`);
-      if (countriesTopo) {
-        const key = _pickTopoObjectKey(countriesTopo, ['countries', 'country', 'admin0', 'ne_admin_0_countries']);
-        if (key) {
-          const hoveredId = String(layer?.runtime?.hoveredCountryId || '').trim();
-          const selectedIds = new Set((layer?.runtime?.selectedCountryIds || []).map(id => String(id)));
-          if (hoveredId || selectedIds.size) {
-            const fc = topojson.feature(countriesTopo, countriesTopo.objects[key]);
-            const features = fc?.type === 'FeatureCollection' ? (fc.features || []) : [fc].filter(Boolean);
-            const countryId = feature => {
-              const p = feature?.properties || {};
-              return String(
-                p.ISO_A3_EH ||
-                p.ADM0_A3 ||
-                p.ISO_A3 ||
-                p.iso_a3 ||
-                p.SOV_A3 ||
-                p.GU_A3 ||
-                p.NAME_EN ||
-                p.NAME ||
-                p.ADMIN ||
-                p.name ||
-                feature?.id ||
-                ''
-              ).trim();
-            };
-
-            for (const feature of features) {
-              const id = countryId(feature);
-              if (!selectedIds.has(id) && id !== hoveredId) continue;
-              ctx.save();
-              ctx.beginPath();
-              ctxPath(_prepareForSeamClipping(feature));
-              ctx.fillStyle = id === hoveredId
-                ? (style.geographicCountryHoverFill || 'rgba(120, 205, 255, 0.32)')
-                : (style.geographicCountrySelectFill || 'rgba(255, 196, 77, 0.34)');
-              _fillPathEvenOdd(ctx);
-              ctx.restore();
-            }
-          }
-
-          const mesh = _prepareForSeamClipping(
-            topojson.mesh(countriesTopo, countriesTopo.objects[key], (a, b) => a !== b)
-          );
-          ctx.save();
-          ctx.beginPath();
-          ctxPath(mesh);
-          ctx.strokeStyle = style.geographicCountryStroke || '#3e3e3e';
-          ctx.lineWidth = (style.geographicCountryStrokeWidth ?? 0.45) / k;
-          ctx.lineJoin = 'round';
-          ctx.lineCap = 'round';
-          ctx.globalAlpha *= (style.geographicCountryOpacity ?? 0.65);
-          ctx.stroke();
-          ctx.restore();
-        }
-      }
-    }
+    await drawCanvasBasemapLayer({
+      ctx,
+      layer,
+      zoomK: k,
+      d3,
+      topojson,
+      projection: _projection,
+      currentTransform: _currentTransform,
+      projectionStamp: _projectionStamp,
+      projId: _projId,
+      basemapCache: _cacheState.get('basemapCache'),
+      setBasemapCache: cache => { _cacheState.set('basemapCache', cache); },
+      graticuleCache: _cacheState.get('graticuleCache'),
+      setGraticuleCache: cache => { _cacheState.set('graticuleCache', cache); },
+      fetchOutline: _fetchOutline,
+      prepareForSeamClipping: _prepareForSeamClipping,
+      basemapOutlineIds: _basemapOutlineIds,
+      chooseGeographicRasterPath: _chooseGeographicRasterPath,
+      computeGeographicImageRect: _computeGeographicImageRect,
+      normalizeScale: _normalizeScale,
+      pickTopoObjectKey,
+      loadRasterImage: _loadRasterImage,
+      fillPathEvenOdd: _fillPathEvenOdd,
+    });
   }
 
   function _drawGeoJSON(ctx, layer, k) {
-    if (!layer.data) return;
-    const s = layer.style;
-    const simplifyLevel = Math.max(0, Math.min(5, Math.round(Number(s.simplify ?? 0))));
-    const simplified    = _getSimplifiedLayerData(layer, simplifyLevel);
-    if (!simplified) return;
-    const prepared     = _prepareForSeamClipping(simplified);
-    const allFeatures  = prepared.type === 'FeatureCollection' ? prepared.features : [prepared];
-
-    const policy = _geojsonRenderPolicy(allFeatures.length, s);
-    if (_currentTransform.k < policy.minZoom) {
-      _geojsonRenderStats.set(layer.id, {
-        totalFeatures: allFeatures.length, inViewFeatures: 0, renderedFeatures: 0,
-        zoomScale: _currentTransform.k, minZoom: policy.minZoom,
-        maxVisibleFeatures: policy.maxVisibleFeatures, hiddenByZoom: true, capped: false,
-      });
-      return;
-    }
-
-    const frameRect = _currentFrameRect || { x: 0, y: 0, width: _width, height: _height };
-    const features = [];
-    let inViewFeatures = 0, capped = false;
-    for (const feature of allFeatures) {
-      const b = _featureBounds(feature);
-      if (!b) continue;
-      if (!_intersectsViewportAfterTransform(b, _currentTransform, frameRect)) continue;
-      inViewFeatures += 1;
-      features.push(feature);
-      if (features.length >= policy.maxVisibleFeatures) { capped = true; break; }
-    }
-
-    _geojsonRenderStats.set(layer.id, {
-      totalFeatures: allFeatures.length, inViewFeatures,
-      renderedFeatures: features.length, zoomScale: _currentTransform.k,
-      minZoom: policy.minZoom, maxVisibleFeatures: policy.maxVisibleFeatures,
-      hiddenByZoom: false, capped,
+    drawCanvasGeoJsonLayer({
+      ctx,
+      layer,
+      k,
+      d3,
+      projection: _projection,
+      currentTransform: _currentTransform,
+      currentFrameRect: _currentFrameRect,
+      width: _width,
+      height: _height,
+      featureBounds: _featureBounds,
+      intersectsViewportAfterTransform: _intersectsViewportAfterTransform,
+      geojsonRenderPolicy: _geojsonRenderPolicy,
+      getSimplifiedLayerData: _getSimplifiedLayerData,
+      prepareForSeamClipping: _prepareForSeamClipping,
+      geojsonRenderStats: _geojsonRenderStats,
     });
-
-    if (!features.length) return;
-
-    const ctxPath = d3.geoPath(_projection, ctx);
-    const fc = { type: 'FeatureCollection', features };
-
-    // Fill pass
-    if (s.fill && s.fill !== 'none') {
-      ctx.save();
-      ctx.beginPath();
-      ctxPath(fc);
-      ctx.fillStyle   = s.fill;
-      ctx.globalAlpha *= (s.fillOpacity ?? 1);
-      ctx.fill();
-      ctx.restore();
-    }
-
-    // Stroke pass
-    if (s.stroke && s.stroke !== 'none' && s.strokeWidth > 0) {
-      ctx.save();
-      ctx.beginPath();
-      ctxPath(fc);
-      ctx.strokeStyle = s.stroke;
-      ctx.lineWidth   = s.strokeWidth / k;
-      ctx.lineJoin    = 'round';
-      ctx.lineCap     = 'round';
-      ctx.stroke();
-      ctx.restore();
-    }
   }
 
   function _drawPoints(ctx, layer, k) {
-    if (!layer.data?.length) return;
-    const s = layer.style;
-    const r = s.radius || 4;
-
-    for (const d of layer.data) {
-      const lon = d.longitude ?? d.lon ?? d.lng;
-      const lat = d.latitude  ?? d.lat;
-      const xy  = _projection([+lon, +lat]);
-      if (!xy) continue;
-
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(xy[0], xy[1], r / k, 0, 2 * Math.PI);
-      if (s.fill && s.fill !== 'none') {
-        ctx.fillStyle   = s.fill;
-        ctx.globalAlpha *= (s.fillOpacity ?? 1);
-        ctx.fill();
-      }
-      if (s.stroke && s.strokeWidth > 0) {
-        ctx.strokeStyle = s.stroke;
-        ctx.lineWidth   = s.strokeWidth / k;
-        ctx.stroke();
-      }
-      ctx.restore();
-
-      if (s.labelField && d[s.labelField]) {
-        ctx.save();
-        ctx.font        = `${(s.labelSize || 12) / k}px sans-serif`;
-        ctx.fillStyle   = '#ffffff';
-        ctx.globalAlpha *= 0.9;
-        ctx.fillText(d[s.labelField], xy[0] + (r + 3) / k, xy[1] + 3 / k);
-        ctx.restore();
-      }
-    }
+    drawCanvasPointsLayer({ ctx, layer, projection: _projection, zoomK: k });
   }
 
   function _drawTree(ctx, layer, k) {
-    if (!layer.data) return;
-    const s = layer.style;
-    const { branches = [], nodes = [] } = layer.data;
-    const discontinuous = _isProjectionDiscontinuous(_projId);
-    const ctxPath = d3.geoPath(_projection, ctx);
-
-    if (branches.length) {
-      ctx.save();
-      ctx.strokeStyle = s.branchColor;
-      ctx.lineWidth   = (s.branchWidth || 1) / k;
-      ctx.lineJoin    = 'round';
-      ctx.lineCap     = 'round';
-      ctx.globalAlpha *= (s.branchOpacity ?? 1);
-      for (const d of branches) {
-        ctx.beginPath();
-        if (s.branchStyle === 'greatcircle' || discontinuous) {
-          ctxPath({ type: 'LineString', coordinates: [[d.startLon, d.startLat], [d.endLon, d.endLat]] });
-        } else {
-          const a = _projection([d.startLon, d.startLat]);
-          const b = _projection([d.endLon, d.endLat]);
-          if (a && b) { ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
-        }
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-
-    if (nodes.length) {
-      ctx.save();
-      ctx.fillStyle   = s.nodeColor;
-      ctx.globalAlpha *= (s.nodeOpacity ?? 1);
-      const nr = (s.nodeRadius || 3) / k;
-      for (const d of nodes) {
-        const xy = _projection([d.longitude ?? d.lon, d.latitude ?? d.lat]);
-        if (!xy) continue;
-        ctx.beginPath();
-        ctx.arc(xy[0], xy[1], nr, 0, 2 * Math.PI);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
+    drawCanvasTreeLayer({
+      ctx,
+      layer,
+      projection: _projection,
+      ctxPath: d3.geoPath(_projection, ctx),
+      zoomK: k,
+      projId: _projId,
+    });
   }
 
   /* ── shared helpers ───────────────────────────────────────────── */
@@ -670,96 +366,35 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
   }
 
   function _basemapOutlineIds(bsrc) {
-    switch (bsrc) {
-      case 'ne110': return ['ne-land-110m', 'ne-countries-110m'];
-      case 'ne50':  return ['ne-land-50m',  'ne-countries-50m'];
-      case 'ne10':  return ['ne-land-10m',  'ne-countries-10m'];
-      default:      return ['land-110m',    'countries-110m'];
-    }
+    return _sharedBasemapOutlineIds(bsrc);
   }
 
   function _normalizeScale(scale, fallback = '50m') {
-    return scale === '10m' || scale === '50m' || scale === '110m' ? scale : fallback;
+    return _sharedNormalizeScale(scale, fallback);
   }
 
   function _chooseGeographicRasterPath(style = {}, zoomK = 1) {
-    const setName = String(style.geographicRasterSet || 'NE1').toUpperCase();
-    const switchZoom = Number(style.geographicRasterSwitchZoom ?? 2.5);
-    const forcedTier = String(style.geographicRasterForceTier || 'auto').toLowerCase();
-    const useHr = forcedTier === 'hr' ? true : forcedTier === '50m' ? false : zoomK >= switchZoom;
-    const base = `data/maps/NaturalEarth/${setName}`;
-    const low = `${base}/${setName}_50M_SR_W/${setName}_50M_SR_W.tif`;
-    const hr = `${base}/${setName}_HR_LC_SR_W_DR/${setName}_HR_LC_SR_W_DR.tif`;
-    return useHr ? hr : low;
+    return _sharedChooseGeographicRasterPath(style, zoomK);
   }
 
   function _computeGeographicImageRect() {
-    if (!_projection) return null;
-    const nw = _projection([-180, 90]);
-    const se = _projection([180, -90]);
-    if (!nw || !se) return null;
-    const x = Math.min(nw[0], se[0]);
-    const y = Math.min(nw[1], se[1]);
-    const width = Math.abs(se[0] - nw[0]);
-    const height = Math.abs(se[1] - nw[1]);
-    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-      return null;
-    }
-    return { x, y, width, height };
+    return _sharedComputeGeographicImageRect(_projection);
   }
 
   function _loadRasterImage(url) {
-    if (!url || _rasterImageFailures.has(url)) return Promise.resolve(null);
-    if (_rasterImageCache.has(url)) return _rasterImageCache.get(url);
-
-    const promise = new Promise(resolve => {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => resolve(img);
-      img.onerror = () => {
-        _rasterImageFailures.add(url);
-        resolve(null);
-      };
-      img.src = url;
-    });
-
-    _rasterImageCache.set(url, promise);
-    return promise;
+    return _rasterLoader.load(url);
   }
 
   function _fillPathEvenOdd(ctx) {
-    try {
-      ctx.fill('evenodd');
-    } catch {
-      ctx.fill();
-    }
+    return _sharedFillPathEvenOdd(ctx);
   }
 
   function _fetchOutline(outlineId) {
-    if (_topoCache[outlineId]) return _topoCache[outlineId];
-    const src = MAP_OUTLINES.find(o => o.id === outlineId);
-    if (!src?.url) return Promise.resolve(null);
-    _topoCache[outlineId] = fetch(src.url)
-      .then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); });
-    return _topoCache[outlineId];
+    return _outlineFetcher.fetchOutline(outlineId);
   }
 
   function _prepareForSeamClipping(geometry) {
-    const needsStitch = _isProjectionDiscontinuous(_projId) || _projId === 'geoEquirectangular';
-    if (!needsStitch) return geometry;
-    if (!geometry || typeof d3.geoStitch !== 'function') return geometry;
-    try { return d3.geoStitch(geometry); } catch { return geometry; }
-  }
-
-  function _pickTopoObjectKey(topology, preferredNames = []) {
-    const objects = topology?.objects || {};
-    const keys = Object.keys(objects);
-    if (!keys.length) return null;
-    const preferred = preferredNames.map(name => String(name).toLowerCase());
-    const direct = keys.find(k => preferred.includes(String(k).toLowerCase()));
-    if (direct) return direct;
-    const fuzzy = keys.find(k => preferred.some(name => String(k).toLowerCase().includes(name)));
-    return fuzzy || keys[0];
+    return _sharedPrepareForSeamClipping(geometry, { d3, projId: _projId });
   }
 
   function _featureBounds(feature) {
@@ -785,86 +420,22 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
   }
 
   function _resolveLayerGeoJSON(layer) {
-    const data = layer?.data;
-    if (!data) return null;
-    if (data._sxFormat !== 'topojson-object') return data;
-    let cached = _resolvedGeoDataCache.get(layer);
-    if (cached && cached.sourceRef === data) return cached.resolved;
-    const topology = data.topology;
-    if (!topology || topology.type !== 'Topology') return null;
-    const keys = Object.keys(topology.objects || {});
-    const key = data.objectName && topology.objects?.[data.objectName] ? data.objectName : keys[0];
-    if (!key) return null;
-    const resolved = topojson.feature(topology, topology.objects[key]);
-    _resolvedGeoDataCache.set(layer, { sourceRef: data, resolved });
-    return resolved;
+    return _resolveLayerGeoJSONShared(layer, {
+      topojson,
+      resolvedCache: _resolvedGeoDataCache,
+    });
   }
 
   function _getSimplifiedLayerData(layer, simplifyLevel) {
-    const resolved = _resolveLayerGeoJSON(layer);
-    if (!resolved || simplifyLevel <= 0) return resolved;
-    let cache = _geojsonLayerCache.get(layer);
-    if (!cache || cache.sourceRef !== resolved || cache.simplifyLevel !== simplifyLevel) {
-      cache = { sourceRef: resolved, simplifyLevel, simplified: _simplifyGeoJSON(resolved, simplifyLevel) };
-      _geojsonLayerCache.set(layer, cache);
-    }
-    return cache.simplified;
-  }
-
-  function _simplifyGeoJSON(data, level) {
-    if (!data || level <= 0) return data;
-    if (data.type === 'FeatureCollection') return { ...data, features: data.features.map(f => _simplifyFeature(f, level)) };
-    if (data.type === 'Feature') return _simplifyFeature(data, level);
-    return { type: data.type, coordinates: _simplifyCoords(data.type, data.coordinates, level) };
-  }
-
-  function _simplifyFeature(feature, level) {
-    if (!feature?.geometry) return feature;
-    return { ...feature, geometry: { ...feature.geometry, coordinates: _simplifyCoords(feature.geometry.type, feature.geometry.coordinates, level) } };
-  }
-
-  function _simplifyCoords(type, coords, level) {
-    if (!coords) return coords;
-    const stride = level + 1;
-    switch (type) {
-      case 'LineString':     return _decimateLine(coords, stride, false);
-      case 'MultiLineString': return coords.map(l => _decimateLine(l, stride, false));
-      case 'Polygon':        return coords.map(r => _decimateLine(r, stride, true));
-      case 'MultiPolygon':   return coords.map(p => p.map(r => _decimateLine(r, stride, true)));
-      default:               return coords;
-    }
-  }
-
-  function _decimateLine(coords, stride, closed) {
-    if (!Array.isArray(coords)) return coords;
-    const minPts = closed ? 4 : 2;
-    if (coords.length <= minPts || stride <= 1) return coords;
-    const out = [];
-    for (let i = 0; i < coords.length; i++) {
-      if (i === 0 || i === coords.length - 1 || (i % stride) === 0) out.push(coords[i]);
-    }
-    if (closed) {
-      if (out[0] !== out[out.length - 1]) out.push(out[0]);
-      while (out.length < 4) out.splice(out.length - 1, 0, out[0]);
-    } else {
-      while (out.length < 2 && coords.length > out.length) out.push(coords[out.length]);
-    }
-    return out;
+    return _getSimplifiedLayerDataShared(layer, simplifyLevel, {
+      topojson,
+      resolvedCache: _resolvedGeoDataCache,
+      layerCache: _geojsonLayerCache,
+    });
   }
 
   function _geojsonRenderPolicy(featureCount, style = {}) {
-    if (style.autoPerf === false) {
-      return {
-        minZoom: Math.max(1, Math.min(12, Number(style.minZoom) || 1)),
-        maxVisibleFeatures: Math.max(100, Math.min(20000, Math.round(Number(style.maxVisible) || 2000))),
-      };
-    }
-    if (featureCount > 8000) return { minZoom: 5,   maxVisibleFeatures: 900 };
-    if (featureCount > 4000) return { minZoom: 4,   maxVisibleFeatures: 1200 };
-    if (featureCount > 2000) return { minZoom: 3,   maxVisibleFeatures: 1600 };
-    if (featureCount > 800)  return { minZoom: 2,   maxVisibleFeatures: 2000 };
-    if (featureCount > 300)  return { minZoom: 1.5, maxVisibleFeatures: 2600 };
-    return { minZoom: 1, maxVisibleFeatures: 4000 };
+    return _geojsonRenderPolicyShared(featureCount, style);
   }
 
   function getZoomTransform() { return _currentTransform; }
@@ -896,34 +467,4 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
     syncZoomTransform,
   };
 }
-/* ── module-level helpers ─────────────────────────────────────────── */
 
-function _wrapLongitude(lon) {
-  if (!Number.isFinite(lon)) return 0;
-  let x = ((lon + 180) % 360 + 360) % 360 - 180;
-  return x === -180 ? 180 : x;
-}
-
-function _clampLatitude(lat) {
-  if (!Number.isFinite(lat)) return 0;
-  return Math.max(-89.999, Math.min(89.999, lat));
-}
-
-function _isProjectionDiscontinuous(projId) {
-  if (!projId) return false;
-  return projId.startsWith('geoInterrupted') ||
-    projId.startsWith('geoPolyhedral') ||
-    projId === 'geoGringortenQuincuncial' ||
-    projId === 'geoPeirceQuincuncial';
-}
-
-function _computeFrameRect(width, height, frameStyle) {
-  const preset  = frameStyle?.aspectPreset || 'slideWide';
-  const ratio   = FRAME_ASPECTS[preset]?.ratio || (16 / 9);
-  const margin  = Math.max(0, Number(frameStyle?.margin ?? 24));
-  const availW  = Math.max(1, width  - 2 * margin);
-  const availH  = Math.max(1, height - 2 * margin);
-  let w = availW, h = w / ratio;
-  if (h > availH) { h = availH; w = h * ratio; }
-  return { x: (width - w) / 2, y: (height - h) / 2, width: w, height: h };
-}

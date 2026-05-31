@@ -11,16 +11,34 @@ import { createGraphicsExporter } from '@artic-network/pearcore/graphics-export.
 import { loadSettings, saveSettings as _saveSettings } from '@artic-network/pearcore/pearcore-app.js';
 import { upgradeAllPaletteColourPickers } from '@artic-network/pearcore/colorpicker.js';
 import { CATEGORICAL_PALETTES } from '@artic-network/pearcore/palettes.js';
-import { analyzeTreeAnnotations, parseTreeData } from '@artic-network/pearcore/tree-io.js';
-import { createLayer, duplicateLayer, LAYER_TYPES, LAYER_ICONS, NE_STANDARD_LAYERS, MAP_OUTLINES, FRAME_ASPECTS } from './layers.js';
+import { createLayer, duplicateLayer, LAYER_TYPES, LAYER_ICONS, NE_STANDARD_LAYERS, MAP_OUTLINES } from './layers.js';
 import {
-  detectFileType,
-  parseGeoData,
-  parseCSV,
   pointFields,
 } from './parsers.js';
-import { createMapRenderer } from './map-renderer.js';
-import { createCanvasMapRenderer, CANVAS_TO_SVG_THRESHOLD } from './canvas-map-renderer.js';
+import { createMapRendererCore } from './core/map-renderer-core.js';
+import { createMapViewport } from './core/map-viewport.js';
+import { createBasemapController } from './core/basemap-controller.js';
+import { createCountryInteractionState } from './core/country-interaction-state.js';
+import { applyNamedGeojsonPerformanceProfile, createDefaultGeojsonLayerBootstrap } from './core/default-geojson-layers.js';
+import { createLayerImportService } from './core/layer-import-service.js';
+import { createMapInteractionController } from './core/map-interaction-controller.js';
+import { openTreeMappingDialog } from './core/tree-mapping-dialog.js';
+import { createPanelController } from './core/panel-controller.js';
+import { createAppCommandController } from './core/app-command-controller.js';
+import {
+  bindSettingsPanelHandlers,
+  populateSettingsForLayer,
+  readSettingsFromLayerUI,
+  syncBasemapModeUI as syncBasemapModeUIControl,
+} from './core/settings-controller.js';
+import { createBasemapStatusController } from './core/basemap-status-controller.js';
+import { createLayoutModeController } from './core/layout-mode-controller.js';
+import { createWelcomeOverlayController } from './core/welcome-overlay-controller.js';
+import { createImportUiController } from './core/import-ui-controller.js';
+import { createGeojsonFeatureInteractionController } from './core/geojson-feature-interaction-controller.js';
+import { computeFrameRect } from './core/frame-geometry.js';
+import { pickTopoObjectKey } from './core/topology-utils.js';
+import { createLayerManager } from './core/layer-manager.js';
 
 // ── Command definitions ──────────────────────────────────────────────────
 
@@ -45,35 +63,114 @@ export async function app(opts = {}) {
   }
 
   // ── State ────────────────────────────────────────────────────────────
-  let layers = [];
+  const layerManager = createLayerManager({ createLayer, duplicateLayer, layerTypes: LAYER_TYPES });
+  const layers = layerManager.layers;
   let selectedId = null;
   let settings = {};
   let _layoutMode = false;
-  let _preLayoutVisibilities = {};   // { layerId: bool } saved on layout entry
   let _naturalEarthRasterSets = ['NE1'];
   let _rasterSetsDiscovered = false;
-  let _zoomHistory = [];
-  let _zoomHistoryIndex = -1;
-  let _zoomHistoryTimer = null;
-  let _suppressZoomHistory = false;
-  let _layoutHoveredCountryId = null;
-  let _layoutHoveredCountryName = '';
-  let _layoutSelectedCountryIds = new Set();
+  const countryInteractionState = createCountryInteractionState();
   const _countryFeaturesCache = new Map();
+  const _selectedGeojsonFeaturesCache = new Map();
+  const defaultGeojsonBootstrap = createDefaultGeojsonLayerBootstrap({
+    layers,
+    createLayer,
+    layerTypes: LAYER_TYPES,
+    insertLayer: layer => layerManager.insertBeforeFrame(layer),
+    fetchImpl: fetch,
+  });
+  const basemapController = createBasemapController({
+    getLayers: () => layers,
+    layerTypes: LAYER_TYPES,
+    normalizeScale: (value, fallback) => _normalizeScale(value, fallback),
+  });
+  const layerImportService = createLayerImportService({
+    layerTypes: LAYER_TYPES,
+    topojson,
+    createLayer,
+    applyNamedGeojsonPerformanceProfile,
+    requestTreeMapping: analysis => openTreeMappingDialog({ overlay: treeMapOverlay, getEl: $ }, analysis),
+  });
 
   function _isGeographicRasterMode() {
-    const base = layers.find(l => l.type === LAYER_TYPES.BASEMAP);
-    return base?.style?.baseMode === 'geographic' && (base?.style?.geographicSourceType || 'raster') === 'raster';
+    return basemapController.isGeographicRasterMode();
   }
 
   function _activeBasemapLayer() {
-    return layers.find(l => l.type === LAYER_TYPES.BASEMAP) || null;
+    return basemapController.getBasemap();
   }
 
   function _activeCountryScale() {
-    const base = _activeBasemapLayer();
-    const s = base?.style || {};
-    return _normalizeScale(s.geographicCountryScale || s.geographicVectorScale, '50m');
+    return basemapController.activeCountryScale();
+  }
+
+  function _activeGeojsonFeatureLayer() {
+    const selected = layers.find(l => l.id === selectedId);
+    if (selected?.type === LAYER_TYPES.GEOJSON && selected.data) return selected;
+    return null;
+  }
+
+  function _geojsonFeatureId(feature, index = -1) {
+    const p = feature?.properties || {};
+    const raw = String(
+      p.id ||
+      p.ID ||
+      p.fid ||
+      p.FID ||
+      p.iso_a3 ||
+      p.ISO_A3 ||
+      p.NAME_EN ||
+      p.NAME ||
+      p.name ||
+      feature?.id ||
+      ''
+    ).trim();
+    if (raw) return raw;
+    return index >= 0 ? `feature-${index}` : '';
+  }
+
+  function _geojsonFeatureName(feature, index = -1) {
+    const p = feature?.properties || {};
+    return String(
+      p.name ||
+      p.NAME ||
+      p.NAME_EN ||
+      p.ADMIN ||
+      p.label ||
+      _geojsonFeatureId(feature, index) ||
+      'Feature'
+    ).trim();
+  }
+
+  function _extractGeojsonFeatures(data) {
+    if (!data || typeof data !== 'object') return [];
+    if (data.type === 'FeatureCollection') return Array.isArray(data.features) ? data.features : [];
+    if (data.type === 'Feature') return [data];
+    return [];
+  }
+
+  async function _getSelectedGeojsonFeatureCache() {
+    const layer = _activeGeojsonFeatureLayer();
+    if (!layer?.data) return null;
+
+    const cached = _selectedGeojsonFeaturesCache.get(layer.id);
+    if (cached?.dataRef === layer.data) return cached.cache;
+
+    const features = _extractGeojsonFeatures(layer.data);
+    const byId = new Map();
+    const nameById = new Map();
+
+    features.forEach((feature, idx) => {
+      const id = _geojsonFeatureId(feature, idx);
+      if (!id) return;
+      byId.set(id, feature);
+      nameById.set(id, _geojsonFeatureName(feature, idx));
+    });
+
+    const cache = { features, byId, nameById };
+    _selectedGeojsonFeaturesCache.set(layer.id, { dataRef: layer.data, cache });
+    return cache;
   }
 
   function _countryFeatureId(feature) {
@@ -107,17 +204,6 @@ export async function app(opts = {}) {
     ).trim();
   }
 
-  function _pickTopoObjectKey(topology, preferredNames = []) {
-    const objects = topology?.objects || {};
-    const keys = Object.keys(objects);
-    if (!keys.length) return null;
-    const preferred = preferredNames.map(name => String(name).toLowerCase());
-    const direct = keys.find(k => preferred.includes(String(k).toLowerCase()));
-    if (direct) return direct;
-    const fuzzy = keys.find(k => preferred.some(name => String(k).toLowerCase().includes(name)));
-    return fuzzy || keys[0];
-  }
-
   async function _getCountryFeatureCache(scale) {
     const key = _normalizeScale(scale, '50m');
     if (_countryFeaturesCache.has(key)) return _countryFeaturesCache.get(key);
@@ -130,7 +216,7 @@ export async function app(opts = {}) {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       });
-      const objKey = _pickTopoObjectKey(topology, ['countries', 'country', 'admin0', 'ne_admin_0_countries']);
+      const objKey = pickTopoObjectKey(topology, ['countries', 'country', 'admin0', 'ne_admin_0_countries']);
       if (!objKey) return null;
       const collection = topojson.feature(topology, topology.objects[objKey]);
       const features = collection?.type === 'FeatureCollection'
@@ -156,40 +242,45 @@ export async function app(opts = {}) {
   }
 
   function _syncBasemapCountryInteractionRuntime() {
+    const hoveredId = countryInteractionState.hoveredId();
+    const selectedIds = Array.from(countryInteractionState.selectedIds());
+    const activeGeojson = _activeGeojsonFeatureLayer();
+
+    for (const layer of layers) {
+      if (layer.type !== LAYER_TYPES.GEOJSON) continue;
+      layer.runtime = layer.runtime || {};
+      if (activeGeojson && layer.id === activeGeojson.id) {
+        layer.runtime.hoveredFeatureId = hoveredId;
+        layer.runtime.selectedFeatureIds = selectedIds;
+      } else {
+        delete layer.runtime.hoveredFeatureId;
+        delete layer.runtime.selectedFeatureIds;
+      }
+    }
+
     const base = _activeBasemapLayer();
-    if (!base) return;
-    base.runtime = {
-      hoveredCountryId: _layoutHoveredCountryId,
-      selectedCountryIds: Array.from(_layoutSelectedCountryIds),
-    };
+    if (base?.runtime) {
+      delete base.runtime.hoveredFeatureId;
+      delete base.runtime.selectedFeatureIds;
+    }
   }
 
   function _countryStatusText() {
-    if (!_layoutHoveredCountryName) return '';
-    const selectedCount = _layoutSelectedCountryIds.size;
-    const selectedSuffix = selectedCount ? ` | selected ${selectedCount}` : '';
-    return `Country: ${_layoutHoveredCountryName}${selectedSuffix}`;
+    return geojsonFeatureInteraction.statusText();
   }
 
   function _updateCountryStatusBar() {
-    if (!statusStats) return;
-    const text = _countryStatusText();
-    if (text) statusStats.textContent = text;
-    else _updateSelectedGeoJSONStatus();
+    geojsonFeatureInteraction.updateStatusBar();
   }
 
   function _clearLayoutCountryInteraction({ keepSelection = false } = {}) {
-    _layoutHoveredCountryId = null;
-    _layoutHoveredCountryName = '';
-    if (!keepSelection) _layoutSelectedCountryIds = new Set();
+    countryInteractionState.clear({ keepSelection });
     _syncBasemapCountryInteractionRuntime();
   }
 
   function _isCountryHoverEnabled() {
-    if (!_layoutMode) return false;
-    const base = _activeBasemapLayer();
-    if (!base) return false;
-    return base.style?.baseMode === 'geographic' && base.style?.geographicShowCountries !== false;
+    const layer = _activeGeojsonFeatureLayer();
+    return !!(layer && layer.visible !== false);
   }
 
   // ── Commands ─────────────────────────────────────────────────────────
@@ -226,156 +317,73 @@ export async function app(opts = {}) {
   const svgEl    = $('map-svg');
   const canvasEl = $('map-canvas');
 
-  // Track which surface is active (canvas by default, SVG at high zoom).
-  let _usingCanvas = true;
-
-  function _switchToCanvas(transform) {
-    if (_usingCanvas) return;
-    _usingCanvas = true;
-    svgEl.style.display    = 'none';
-    canvasEl.style.display = 'block';
-    if (transform) canvasRenderer.syncZoomTransform(transform);
-  }
-
-  function _switchToSvg(transform) {
-    if (!_usingCanvas) return;
-    _usingCanvas = false;
-    canvasEl.style.display = 'none';
-    svgEl.style.display    = 'block';
-    if (transform) svgRenderer.syncZoomTransform(transform);
-  }
-
-  const canvasRenderer = createCanvasMapRenderer({
-    canvasElement: canvasEl, d3, topojson,
-    onZoomChange: (transform) => {
-      _updateSelectedGeoJSONStatus(transform.k);
-      _recordZoomTransform(transform);
-      if (_isGeographicRasterMode()) return;
-      if (transform.k >= CANVAS_TO_SVG_THRESHOLD) _switchToSvg(transform);
-    },
-  });
-
-  const svgRenderer = createMapRenderer({
-    svgElement: svgEl, d3, topojson,
-    onZoomChange: (transform) => {
-      _updateSelectedGeoJSONStatus(transform.k);
-      _recordZoomTransform(transform);
-      if (_isGeographicRasterMode()) {
-        _switchToCanvas(transform);
-        return;
+  const renderer = createMapRendererCore({
+    svgElement: svgEl,
+    canvasElement: canvasEl,
+    d3,
+    topojson,
+    getLayers: () => layers,
+    onZoomChange: transform => {
+      const effective = _constrainViewModeTransform(transform);
+      if (effective !== transform) {
+        mapViewport.withSuppressedHistory(() => {
+          renderer.syncZoomTransform(effective);
+        });
       }
-      if (transform.k < CANVAS_TO_SVG_THRESHOLD) _switchToCanvas(transform);
+      _updateSelectedGeoJSONStatus(effective.k);
+      _recordZoomTransform(effective);
     },
+    shouldForceCanvas: () => _isGeographicRasterMode(),
   });
 
-  // Unified renderer proxy — all existing code uses this unchanged.
-  const renderer = {
-    resize(w, h)    { canvasRenderer.resize(w, h); svgRenderer.resize(w, h); },
-    setLayers(l)    { canvasRenderer.setLayers(l); svgRenderer.setLayers(l); },
-    render()        {
-      const active = _usingCanvas ? canvasRenderer : svgRenderer;
-      active.setLayers(layers);
-      return active.render();
-    },
-    resetZoom()     { canvasRenderer.resetZoom(); svgRenderer.resetZoom(); },
-    getProjection() { return (_usingCanvas ? canvasRenderer : svgRenderer).getProjection(); },
-    getPath()       { return (_usingCanvas ? canvasRenderer : svgRenderer).getPath(); },
-    getGeoJSONRenderStats(id) {
-      return (_usingCanvas ? canvasRenderer : svgRenderer).getGeoJSONRenderStats(id);
-    },
-    setLayerVisibility(id, v) {
-      return (_usingCanvas ? canvasRenderer : svgRenderer).setLayerVisibility(id, v);
-    },
-    async serializeSvg() {
-      // Render to the SVG renderer synced to current zoom, then serialize.
-      const w = $('canvas-wrapper')?.clientWidth  || 800;
-      const h = $('canvas-wrapper')?.clientHeight || 600;
-      svgRenderer.resize(w, h);
-      svgRenderer.setLayers(layers);
-      const t = (_usingCanvas ? canvasRenderer : svgRenderer).getZoomTransform();
-      svgRenderer.syncZoomTransform(t);
-      await svgRenderer.render();
-      return svgRenderer.serializeSvg();
-    },
-    setSpacePanActive(a) {
-      canvasRenderer.setSpacePanActive(a);
-      svgRenderer.setSpacePanActive(a);
-    },
-    panProjectionByPixels(dx, dy) {
-      return (_usingCanvas ? canvasRenderer : svgRenderer).panProjectionByPixels(dx, dy);
-    },
-    panProjectionLongitudeByPixels(dx) {
-      return (_usingCanvas ? canvasRenderer : svgRenderer).panProjectionLongitudeByPixels(dx);
-    },
-    getZoomTransform() {
-      return (_usingCanvas ? canvasRenderer : svgRenderer).getZoomTransform?.() || d3.zoomIdentity;
-    },
-    syncZoomTransform(transform) {
-      canvasRenderer.syncZoomTransform(transform);
-      svgRenderer.syncZoomTransform(transform);
-    },
-  };
-
-  function _cloneTransform(transform) {
-    if (!transform) return d3.zoomIdentity;
-    return d3.zoomIdentity.translate(transform.x, transform.y).scale(transform.k);
-  }
-
-  function _sameTransform(a, b) {
-    if (!a || !b) return false;
-    const eps = 1e-6;
-    return Math.abs(a.k - b.k) < eps && Math.abs(a.x - b.x) < eps && Math.abs(a.y - b.y) < eps;
-  }
+  const mapViewport = createMapViewport({
+    d3,
+    onHistoryChange: _updateZoomNavButtons,
+  });
 
   function _updateZoomNavButtons() {
     const back = $('btn-zoom-back');
     const fwd = $('btn-zoom-forward');
-    if (back) back.disabled = _zoomHistoryIndex <= 0;
-    if (fwd) fwd.disabled = _zoomHistoryIndex < 0 || _zoomHistoryIndex >= _zoomHistory.length - 1;
-  }
-
-  function _commitZoomTransform(transform) {
-    if (!transform || _suppressZoomHistory) return;
-    if (_zoomHistoryIndex >= 0 && _sameTransform(_zoomHistory[_zoomHistoryIndex], transform)) {
-      _updateZoomNavButtons();
-      return;
-    }
-    if (_zoomHistoryIndex < _zoomHistory.length - 1) {
-      _zoomHistory = _zoomHistory.slice(0, _zoomHistoryIndex + 1);
-    }
-    _zoomHistory.push(_cloneTransform(transform));
-    if (_zoomHistory.length > 200) _zoomHistory.shift();
-    _zoomHistoryIndex = _zoomHistory.length - 1;
-    _updateZoomNavButtons();
+    if (back) back.disabled = !mapViewport.canGoBack();
+    if (fwd) fwd.disabled = !mapViewport.canGoForward();
   }
 
   function _recordZoomTransform(transform, { immediate = false } = {}) {
-    if (!transform || _suppressZoomHistory) return;
-    if (immediate) {
-      clearTimeout(_zoomHistoryTimer);
-      _zoomHistoryTimer = null;
-      _commitZoomTransform(transform);
-      return;
-    }
-    clearTimeout(_zoomHistoryTimer);
-    _zoomHistoryTimer = setTimeout(() => {
-      _zoomHistoryTimer = null;
-      _commitZoomTransform(transform);
-    }, 140);
+    mapViewport.record(transform, { immediate });
+  }
+
+  function _viewportSize() {
+    const wrapper = $('canvas-wrapper');
+    return {
+      width: wrapper?.clientWidth || 0,
+      height: wrapper?.clientHeight || 0,
+    };
+  }
+
+  function _transformClose(a, b, epsilon = 1e-6) {
+    if (!a || !b) return false;
+    return (
+      Math.abs((a.k || 1) - (b.k || 1)) <= epsilon &&
+      Math.abs((a.x || 0) - (b.x || 0)) <= epsilon &&
+      Math.abs((a.y || 0) - (b.y || 0)) <= epsilon
+    );
+  }
+
+  function _constrainViewModeTransform(transform) {
+    if (_layoutMode || !mapViewport.hasViewConstraint()) return transform;
+    const clamped = mapViewport.clampToViewConstraint(transform, _viewportSize());
+    return _transformClose(clamped, transform) ? transform : clamped;
   }
 
   function _applyHistoryTransform(index) {
-    const target = _zoomHistory[index];
+    const target = mapViewport.getAt(index);
     if (!target) return;
-    _suppressZoomHistory = true;
-    try {
-      renderer.syncZoomTransform(target);
-    } finally {
-      _suppressZoomHistory = false;
-    }
-    _zoomHistoryIndex = index;
-    _updateZoomNavButtons();
-    _updateSelectedGeoJSONStatus(target.k);
+    const constrained = _constrainViewModeTransform(target);
+    mapViewport.withSuppressedHistory(() => {
+      renderer.syncZoomTransform(constrained);
+    });
+    mapViewport.setIndex(index);
+    _updateSelectedGeoJSONStatus(constrained.k);
     _queueRender();
   }
 
@@ -404,8 +412,7 @@ export async function app(opts = {}) {
   }
 
   // ── Create default base-map layer ────────────────────────────────────
-  layers.push(createLayer(LAYER_TYPES.BASEMAP, 'Base Map'));
-  layers.push(createLayer(LAYER_TYPES.FRAME, 'Map Frame'));
+  layerManager.initializeDefaults();
   selectedId = layers[0].id;
 
   // Restore saved state (layer styles only — data isn't persisted)
@@ -423,55 +430,21 @@ export async function app(opts = {}) {
   // ── Layer panel (left) ───────────────────────────────────────────────
   const layerPanel  = $('layer-panel');
   const layerList   = $('layer-list');
-
-  // Simple slide-out helpers
-  function _openPanel(panel, bodyClass) {
-    panel.classList.add('open');
-    panel.inert = false;
-  }
-  function _closePanel(panel, bodyClass) {
-    panel.classList.remove('open', 'pinned');
-    panel.inert = true;
-    document.body.classList.remove(bodyClass);
-  }
-  function _pinPanel(panel, bodyClass, pinBtn) {
-    panel.classList.add('open', 'pinned');
-    panel.inert = false;
-    document.body.classList.add(bodyClass);
-    if (pinBtn) { pinBtn.classList.add('active'); pinBtn.innerHTML = '<i class="bi bi-pin-angle-fill"></i>'; }
-    window.dispatchEvent(new Event('resize'));
-  }
-  function _unpinPanel(panel, bodyClass, pinBtn) {
-    panel.classList.remove('pinned');
-    document.body.classList.remove(bodyClass);
-    if (pinBtn) { pinBtn.classList.remove('active'); pinBtn.innerHTML = '<i class="bi bi-pin-angle"></i>'; }
-    window.dispatchEvent(new Event('resize'));
-  }
-
-  // Layer panel open/close/pin
-  const btnLayerPin = $('btn-layer-pin');
-  let layerPinned = false;
-  $('btn-layers')?.addEventListener('click', () => {
-    layerPanel.classList.contains('open') ? _closePanel(layerPanel, 'layers-pinned') : _openPanel(layerPanel);
-  });
-  $('btn-layer-close')?.addEventListener('click', () => _closePanel(layerPanel, 'layers-pinned'));
-  btnLayerPin?.addEventListener('click', () => {
-    layerPinned = !layerPinned;
-    layerPinned ? _pinPanel(layerPanel, 'layers-pinned', btnLayerPin) : _unpinPanel(layerPanel, 'layers-pinned', btnLayerPin);
-  });
-
-  // Settings panel open/close/pin (right)
   const settingsPanel = $('settings-panel');
   const settingsPanelBody = $('settings-panel-body');
-  const btnSettingsPin = $('btn-settings-pin');
-  let settingsPinned = false;
-  $('btn-settings')?.addEventListener('click', () => {
-    settingsPanel.classList.contains('open') ? _closePanel(settingsPanel, 'settings-pinned') : _openPanel(settingsPanel);
+  const panelController = createPanelController({
+    documentRef: document,
+    windowRef: window,
+    layerPanel,
+    settingsPanel,
+    layerPinButton: $('btn-layer-pin'),
+    settingsPinButton: $('btn-settings-pin'),
   });
-  $('btn-settings-close')?.addEventListener('click', () => _closePanel(settingsPanel, 'settings-pinned'));
-  btnSettingsPin?.addEventListener('click', () => {
-    settingsPinned = !settingsPinned;
-    settingsPinned ? _pinPanel(settingsPanel, 'settings-pinned', btnSettingsPin) : _unpinPanel(settingsPanel, 'settings-pinned', btnSettingsPin);
+  panelController.bindUI({
+    layerToggleButton: $('btn-layers'),
+    layerCloseButton: $('btn-layer-close'),
+    settingsToggleButton: $('btn-settings'),
+    settingsCloseButton: $('btn-settings-close'),
   });
 
   _upgradeSettingsColourPickers();
@@ -536,30 +509,15 @@ export async function app(opts = {}) {
   }
 
   function _frameIndex() {
-    return layers.findIndex(l => l.type === LAYER_TYPES.FRAME);
+    return layerManager.frameIndex();
   }
 
   function _baseIndex() {
-    return layers.findIndex(l => l.type === LAYER_TYPES.BASEMAP);
-  }
-
-  function _ensureBaseOnBottom() {
-    const idx = _baseIndex();
-    if (idx <= 0) return;
-    const [base] = layers.splice(idx, 1);
-    layers.unshift(base);
-  }
-
-  function _ensureFrameOnTop() {
-    const idx = _frameIndex();
-    if (idx < 0 || idx === layers.length - 1) return;
-    const [frame] = layers.splice(idx, 1);
-    layers.push(frame);
+    return layerManager.baseIndex();
   }
 
   function _ensureFixedBoundaryLayers() {
-    _ensureBaseOnBottom();
-    _ensureFrameOnTop();
+    layerManager.ensureFixedBoundaryLayers();
   }
 
   layerList?.addEventListener('click', e => {
@@ -614,21 +572,20 @@ export async function app(opts = {}) {
 
   // Layer CRUD buttons
   $('btn-delete-layer')?.addEventListener('click', () => {
-    const idx = layers.findIndex(l => l.id === selectedId);
-    if (idx < 0 || _isLockedLayer(layers[idx])) return;
-    layers.splice(idx, 1);
-    _ensureFixedBoundaryLayers();
+    const current = layerManager.findById(selectedId);
+    if (!current || _isLockedLayer(current)) return;
+    const result = layerManager.deleteById(selectedId);
+    if (!result) return;
+    const idx = result.index;
     selectedId = layers[Math.min(idx, layers.length - 1)]?.id || null;
     _renderLayerList(); _showSettingsForLayer(selectedId); _render(); _saveState();
   });
 
   $('btn-dup-layer')?.addEventListener('click', () => {
-    const src = layers.find(l => l.id === selectedId);
+    const src = layerManager.findById(selectedId);
     if (!src || src.type === LAYER_TYPES.FRAME) return;
-    const dup = duplicateLayer(src);
-    const idx = layers.indexOf(src);
-    layers.splice(idx + 1, 0, dup);
-    _ensureFixedBoundaryLayers();
+    const dup = layerManager.duplicateById(selectedId);
+    if (!dup) return;
     selectedId = dup.id;
     _renderLayerList(); _showSettingsForLayer(selectedId); _render(); _saveState();
   });
@@ -637,17 +594,9 @@ export async function app(opts = {}) {
   $('btn-move-down')?.addEventListener('click', () => _moveLayer(-1));
 
   function _moveLayer(dir) {
-    const idx = layers.findIndex(l => l.id === selectedId);
-    if (idx < 0 || _isLockedLayer(layers[idx])) return;
-    const minMovableIdx = Math.max(2, _baseIndex() + 2);
-    const frameIdx = _frameIndex();
-    const maxMovableIdx = Math.max(minMovableIdx, frameIdx - 1);
-    const to = idx + dir;
-    if (to < 0 || to >= layers.length) return;
-    if (to < minMovableIdx || to > maxMovableIdx) return;
-    if (dir > 0 && to >= frameIdx) return;
-    [layers[idx], layers[to]] = [layers[to], layers[idx]];
-    _ensureFixedBoundaryLayers();
+    const current = layerManager.findById(selectedId);
+    if (!current || _isLockedLayer(current)) return;
+    if (!layerManager.moveById(selectedId, dir)) return;
     _renderLayerList(); _render(); _saveState();
   }
 
@@ -673,84 +622,17 @@ export async function app(opts = {}) {
   // ── Settings panel wiring ────────────────────────────────────────────
 
   const SETTINGS_SECTIONS = ['settings-basemap', 'settings-frame', 'settings-geojson', 'settings-points', 'settings-tree'];
-
-  function _formatLatLon(lat, lon) {
-    const latAbs = Math.abs(Number(lat) || 0).toFixed(2);
-    const lonAbs = Math.abs(Number(lon) || 0).toFixed(2);
-    return `${latAbs}${(lat || 0) >= 0 ? 'N' : 'S'}, ${lonAbs}${(lon || 0) >= 0 ? 'E' : 'W'}`;
-  }
-
-  function _projectionLabel(projId) {
-    if (!projId) return 'Natural Earth';
-    const projectionSelect = $('set-bm-projection');
-    const option = projectionSelect?.querySelector(`option[value="${projId}"]`);
-    return option?.textContent?.trim() || projId.replace(/^geo/, '');
-  }
-
-  function _currentBasemapDetailLabel(zoomK = null) {
-    const base = layers.find(l => l.type === LAYER_TYPES.BASEMAP);
-    if (!base) return 'n/a';
-    const s = base.style || {};
-    const mode = s.baseMode || 'globe';
-    const source = s.geographicSourceType || 'raster';
-    const k = Number.isFinite(zoomK) ? zoomK : (renderer.getZoomTransform?.()?.k || 1);
-
-    if (mode === 'geographic') {
-      if (source === 'raster') {
-        const setName = String(s.geographicRasterSet || 'NE1').toUpperCase().replace(/[^A-Z0-9_-]/g, '');
-        const threshold = Number(s.geographicRasterSwitchZoom ?? 2.5);
-        const forcedTier = String(s.geographicRasterForceTier || 'auto').toLowerCase();
-        const tier = forcedTier === 'hr' ? 'HR' : forcedTier === '50m' ? '50M' : (k >= threshold ? 'HR' : '50M');
-        const forced = forcedTier === 'auto' ? '' : ' forced';
-        return `${setName} ${tier}${forced}`;
-      }
-
-      const landScale = _normalizeScale(s.geographicVectorScale, '50m').toUpperCase();
-      const countryScale = _normalizeScale(s.geographicCountryScale, '50m').toUpperCase();
-      const countryState = s.geographicShowCountries === false ? 'countries off' : `countries ${countryScale}`;
-      return `land ${landScale}, ${countryState}`;
-    }
-
-    return `projection ${_projectionLabel(s.projection || 'geoNaturalEarth1')}`;
-  }
+  const basemapStatusController = createBasemapStatusController({
+    getEl: $,
+    getLayers: () => layers,
+    layerTypes: LAYER_TYPES,
+    getZoomTransform: () => renderer.getZoomTransform?.(),
+    isGeographicRasterMode: _isGeographicRasterMode,
+    normalizeScale: _normalizeScale,
+  });
 
   function _updateBasemapReadonlyPanel(zoomK = null) {
-    const base = layers.find(l => l.type === LAYER_TYPES.BASEMAP);
-    if (!base) return;
-    const s = base.style || {};
-    const mode = s.baseMode || 'globe';
-    const source = s.geographicSourceType || 'raster';
-    const k = Number.isFinite(zoomK) ? zoomK : (renderer.getZoomTransform?.()?.k || 1);
-    const centerLon = Number(s.center?.[0] || 0);
-    const centerLat = Number(s.center?.[1] || 0);
-
-    const modeChoices = $('bm-ro-mode-choices');
-    const sourceChoices = $('bm-ro-source-choices');
-    const modeEl = $('bm-ro-mode');
-    const sourceEl = $('bm-ro-source');
-    const zoomEl = $('bm-ro-zoom');
-    const centerEl = $('bm-ro-center');
-    const detailEl = $('bm-ro-detail');
-
-    if (modeChoices) {
-      modeChoices.innerHTML = `
-        <span class="sx-choice-pills">
-          <span class="sx-choice-pill ${mode === 'globe' ? 'active' : ''}">Globe</span>
-          <span class="sx-choice-pill ${mode === 'geographic' ? 'active' : ''}">Natural Earth Geographic</span>
-        </span>`;
-    }
-    if (sourceChoices) {
-      sourceChoices.innerHTML = `
-        <span class="sx-choice-pills">
-          <span class="sx-choice-pill ${source === 'raster' ? 'active' : ''}">Raster</span>
-          <span class="sx-choice-pill ${source === 'vector' ? 'active' : ''}">Vector</span>
-        </span>`;
-    }
-    if (modeEl) modeEl.textContent = mode === 'geographic' ? 'Natural Earth Geographic (WGS84)' : `Globe (${_projectionLabel(s.projection || 'geoNaturalEarth1')})`;
-    if (sourceEl) sourceEl.textContent = mode === 'geographic' ? (source === 'vector' ? 'Natural Earth Vector' : 'Natural Earth Raster') : 'Projection Vector';
-    if (zoomEl) zoomEl.textContent = k.toFixed(2);
-    if (centerEl) centerEl.textContent = _formatLatLon(centerLat, centerLon);
-    if (detailEl) detailEl.textContent = _currentBasemapDetailLabel(k);
+    basemapStatusController.updateBasemapReadonlyPanel(zoomK);
   }
 
   function _syncBasemapLayoutLockUI(layer) {
@@ -772,7 +654,7 @@ export async function app(opts = {}) {
       else child.style.display = '';
     }
 
-    if (!readOnly) _syncBasemapModeUI();
+    if (!readOnly) syncBasemapModeUIControl({ getEl: $ });
 
     if (readOnly) _updateBasemapReadonlyPanel();
   }
@@ -804,226 +686,16 @@ export async function app(opts = {}) {
     const sec = $(secId);
     if (sec) sec.style.display = '';
 
-    _populateSettings(layer);
+    populateSettingsForLayer({
+      layer,
+      layerTypes: LAYER_TYPES,
+      getEl: $,
+      pointFields,
+      normalizeScale: _normalizeScale,
+      populateGeographicRasterSetOptions: _populateGeographicRasterSetOptions,
+    });
     _syncBasemapLayoutLockUI(layer);
     if (layer.type === LAYER_TYPES.BASEMAP) _updateBasemapReadonlyPanel();
-  }
-
-  function _populateSettings(layer) {
-    const s = layer.style;
-    switch (layer.type) {
-      case LAYER_TYPES.BASEMAP:
-        $('set-bm-mode').value              = s.baseMode || 'globe';
-        $('set-bm-projection').value        = s.projection;
-        $('set-bm-bg').value                = s.backgroundFill || '#ffffff';
-        $('set-bm-grat').checked            = s.showGraticule !== false;
-        $('set-bm-grat-step').value         = s.graticuleStep ?? 10;
-        $('set-bm-grat-stroke').value       = s.graticuleStroke || '#ffffff';
-        $('set-bm-grat-opacity').value      = s.graticuleOpacity ?? 0.1;
-        $('set-bm-proj-boundary').value     = s.projectionBoundaryStroke || '#4a8a5a';
-        $('set-bm-proj-boundary-sw').value  = s.projectionBoundaryWidth ?? 1;
-        $('set-bm-globe-on').checked        = s.showGlobe !== false;
-        $('set-bm-water').value             = s.oceanFill || '#02292e';
-        $('set-bm-land').value              = s.landFill || '#1a3a2a';
-        $('set-bm-land-boundaries').checked = s.showLandBoundaries !== false;
-        $('set-bm-country-boundaries').checked = s.showCountryBoundaries !== false;
-        $('set-bm-globe-outline').value     = s.landBoundaryStroke || '#4a8a5a';
-        $('set-bm-globe-outline-sw').value  = s.landBoundaryWidth ?? 0.5;
-        $('set-bm-geographic-source').value = s.geographicSourceType || 'raster';
-        _populateGeographicRasterSetOptions(s.geographicRasterSet || 'NE1');
-        $('set-bm-geographic-vector-scale').value = _normalizeScale(s.geographicVectorScale, '50m');
-        $('set-bm-geographic-ocean').value = s.geographicOceanFill || '#0d2f40';
-        $('set-bm-geographic-land').value = s.geographicLandFill || '#9aa876';
-        $('set-bm-geographic-countries-on').checked = s.geographicShowCountries !== false;
-        $('set-bm-geographic-country-scale').value = _normalizeScale(s.geographicCountryScale, '50m');
-        $('set-bm-geographic-country-stroke').value = s.geographicCountryStroke || '#3e3e3e';
-        $('set-bm-geographic-country-width').value = s.geographicCountryStrokeWidth ?? 0.45;
-        $('set-bm-geographic-country-opacity').value = s.geographicCountryOpacity ?? 0.65;
-        _syncBasemapModeUI();
-        break;
-      case LAYER_TYPES.GEOJSON:
-        $('set-gj-fill').value    = s.fill;
-        $('set-gj-fill-op').value = s.fillOpacity;
-        $('set-gj-stroke').value  = s.stroke;
-        $('set-gj-sw').value      = s.strokeWidth;
-        $('set-gj-perf-auto').checked = s.autoPerf !== false;
-        $('set-gj-min-zoom').value    = Number.isFinite(+s.minZoom) ? +s.minZoom : 2;
-        $('set-gj-max-visible').value = Number.isFinite(+s.maxVisible) ? +s.maxVisible : 2000;
-        $('set-gj-simplify').value    = Number.isFinite(+s.simplify) ? +s.simplify : 0;
-        _syncOceanLayerUI(layer);
-        _syncGeoJSONPerfUI();
-        break;
-      case LAYER_TYPES.FRAME:
-        $('set-fr-aspect').value  = s.aspectPreset;
-        $('set-fr-fill-on').checked = s.showFill !== false;
-        $('set-fr-fill').value    = s.fill;
-        $('set-fr-fill-op').value = s.fillOpacity;
-        $('set-fr-stroke').value  = s.stroke;
-        $('set-fr-sw').value      = s.strokeWidth;
-        break;
-      case LAYER_TYPES.FRAME:
-        $('set-fr-aspect').value  = s.aspectPreset;
-        $('set-fr-fill-on').checked = s.showFill !== false;
-        $('set-fr-fill').value    = s.fill;
-        $('set-fr-fill-op').value = s.fillOpacity;
-        $('set-fr-stroke').value  = s.stroke;
-        $('set-fr-sw').value      = s.strokeWidth;
-        break;
-      case LAYER_TYPES.POINTS:
-        $('set-pt-radius').value  = s.radius;
-        $('set-pt-fill').value    = s.fill;
-        $('set-pt-fill-op').value = s.fillOpacity;
-        $('set-pt-stroke').value  = s.stroke;
-        $('set-pt-sw').value      = s.strokeWidth;
-        $('set-pt-label-sz').value= s.labelSize;
-        // Populate label field options
-        const labelSel = $('set-pt-label');
-        labelSel.innerHTML = '<option value="">None</option>';
-        if (layer.data) {
-          for (const f of pointFields(layer.data)) {
-            const opt = document.createElement('option');
-            opt.value = opt.textContent = f;
-            if (f === s.labelField) opt.selected = true;
-            labelSel.appendChild(opt);
-          }
-        }
-        break;
-      case LAYER_TYPES.TREE:
-        $('set-tr-style').value      = s.branchStyle;
-        $('set-tr-color').value      = s.branchColor;
-        $('set-tr-width').value      = s.branchWidth;
-        $('set-tr-op').value         = s.branchOpacity;
-        $('set-tr-node-color').value = s.nodeColor;
-        $('set-tr-node-r').value     = s.nodeRadius;
-        $('set-tr-node-op').value    = s.nodeOpacity;
-        break;
-    }
-  }
-
-  function _readSettingsFromUI(layer) {
-    if (!layer) return;
-    layer.name    = $('setting-layer-name')?.value || layer.name;
-    layer.opacity = +($('setting-layer-opacity')?.value ?? layer.opacity);
-    const s = layer.style;
-    switch (layer.type) {
-      case LAYER_TYPES.BASEMAP:
-        if (!_layoutMode) return;
-        s.baseMode                 = $('set-bm-mode')?.value || 'globe';
-        s.projection               = $('set-bm-projection')?.value;
-        s.backgroundFill           = $('set-bm-bg')?.value;
-        s.showGraticule            = $('set-bm-grat')?.checked;
-        s.graticuleStep            = +$('set-bm-grat-step')?.value;
-        s.graticuleStroke          = $('set-bm-grat-stroke')?.value;
-        s.graticuleOpacity         = +$('set-bm-grat-opacity')?.value;
-        s.projectionBoundaryStroke = $('set-bm-proj-boundary')?.value;
-        s.projectionBoundaryWidth  = +$('set-bm-proj-boundary-sw')?.value;
-        s.showGlobe                = $('set-bm-globe-on')?.checked;
-        s.oceanFill                = $('set-bm-water')?.value;
-        s.landFill                 = $('set-bm-land')?.value;
-        s.showLandBoundaries       = $('set-bm-land-boundaries')?.checked;
-        s.showCountryBoundaries    = $('set-bm-country-boundaries')?.checked;
-        s.landBoundaryStroke       = $('set-bm-globe-outline')?.value;
-        s.landBoundaryWidth        = +$('set-bm-globe-outline-sw')?.value;
-        s.datum                    = 'WGS84';
-        s.geographicSourceType     = $('set-bm-geographic-source')?.value || 'raster';
-        s.geographicRasterSet      = $('set-bm-geographic-raster-set')?.value || 'NE1';
-        s.geographicVectorScale    = _normalizeScale($('set-bm-geographic-vector-scale')?.value, '50m');
-        s.geographicOceanFill      = $('set-bm-geographic-ocean')?.value || '#0d2f40';
-        s.geographicLandFill       = $('set-bm-geographic-land')?.value || '#9aa876';
-        s.geographicShowCountries  = $('set-bm-geographic-countries-on')?.checked;
-        s.geographicCountryScale   = _normalizeScale($('set-bm-geographic-country-scale')?.value, '50m');
-        s.geographicCountryStroke  = $('set-bm-geographic-country-stroke')?.value || '#3e3e3e';
-        s.geographicCountryStrokeWidth = +$('set-bm-geographic-country-width')?.value;
-        s.geographicCountryOpacity = +$('set-bm-geographic-country-opacity')?.value;
-        if (s.baseMode === 'geographic') {
-          s.projection = 'geoEquirectangular';
-          s.basemapSource = `ne${s.geographicVectorScale.replace('m', '')}`;
-          s.showGlobe = true;
-          s.showLandBoundaries = false;
-          s.showCountryBoundaries = false;
-        }
-        if (s.baseMode === 'geographic' && s.geographicSourceType === 'raster') {
-          _switchToCanvas();
-        }
-        _syncBasemapModeUI();
-        break;
-      case LAYER_TYPES.GEOJSON:
-        s.fill        = $('set-gj-fill')?.value;
-        s.fillOpacity = +$('set-gj-fill-op')?.value;
-        s.stroke      = $('set-gj-stroke')?.value;
-        s.strokeWidth = +$('set-gj-sw')?.value;
-        s.autoPerf    = $('set-gj-perf-auto')?.checked;
-        s.minZoom     = +$('set-gj-min-zoom')?.value;
-        s.maxVisible  = +$('set-gj-max-visible')?.value;
-        s.simplify    = +$('set-gj-simplify')?.value;
-        if (_isOceansLayer(layer)) {
-          s.oceanFill = $('set-oc-ocean')?.value;
-          s.fill = s.oceanFill;
-          s.landFill = $('set-oc-land')?.value;
-          s.landBoundaryStroke = $('set-oc-boundary')?.value;
-          s.landBoundaryWidth = +$('set-oc-boundary-sw')?.value;
-        }
-        _syncGeoJSONPerfUI();
-        break;
-      case LAYER_TYPES.FRAME:
-        s.aspectPreset = $('set-fr-aspect')?.value;
-        s.showFill     = $('set-fr-fill-on')?.checked;
-        s.fill         = $('set-fr-fill')?.value;
-        s.fillOpacity  = +$('set-fr-fill-op')?.value;
-        s.stroke       = $('set-fr-stroke')?.value;
-        s.strokeWidth  = +$('set-fr-sw')?.value;
-        break;
-      case LAYER_TYPES.FRAME:
-        s.aspectPreset = $('set-fr-aspect')?.value;
-        s.showFill     = $('set-fr-fill-on')?.checked;
-        s.fill         = $('set-fr-fill')?.value;
-        s.fillOpacity  = +$('set-fr-fill-op')?.value;
-        s.stroke       = $('set-fr-stroke')?.value;
-        s.strokeWidth  = +$('set-fr-sw')?.value;
-        break;
-      case LAYER_TYPES.POINTS:
-        s.radius      = +$('set-pt-radius')?.value;
-        s.fill        = $('set-pt-fill')?.value;
-        s.fillOpacity = +$('set-pt-fill-op')?.value;
-        s.stroke      = $('set-pt-stroke')?.value;
-        s.strokeWidth = +$('set-pt-sw')?.value;
-        s.labelField  = $('set-pt-label')?.value;
-        s.labelSize   = +$('set-pt-label-sz')?.value;
-        break;
-      case LAYER_TYPES.TREE:
-        s.branchStyle   = $('set-tr-style')?.value;
-        s.branchColor   = $('set-tr-color')?.value;
-        s.branchWidth   = +$('set-tr-width')?.value;
-        s.branchOpacity = +$('set-tr-op')?.value;
-        s.nodeColor     = $('set-tr-node-color')?.value;
-        s.nodeRadius    = +$('set-tr-node-r')?.value;
-        s.nodeOpacity   = +$('set-tr-node-op')?.value;
-        break;
-    }
-  }
-
-  function _syncBasemapModeUI() {
-    const mode = $('set-bm-mode')?.value || 'globe';
-    const geographic = mode === 'geographic';
-    if ($('settings-bm-globe-group')) $('settings-bm-globe-group').style.display = geographic ? 'none' : '';
-    if ($('settings-bm-geographic-group')) $('settings-bm-geographic-group').style.display = geographic ? '' : 'none';
-
-    const enabled = $('set-bm-globe-on')?.checked !== false;
-    for (const id of ['set-bm-land', 'set-bm-land-boundaries', 'set-bm-country-boundaries']) {
-      if ($(id)) $(id).disabled = !enabled;
-    }
-    const outlineEnabled = enabled && (($('set-bm-land-boundaries')?.checked !== false) || ($('set-bm-country-boundaries')?.checked !== false));
-    if ($('set-bm-globe-outline')) $('set-bm-globe-outline').disabled = !outlineEnabled;
-    if ($('set-bm-globe-outline-sw')) $('set-bm-globe-outline-sw').disabled = !outlineEnabled;
-
-    const geographicSource = $('set-bm-geographic-source')?.value || 'raster';
-    if ($('settings-bm-geographic-raster-group')) $('settings-bm-geographic-raster-group').style.display = (geographic && geographicSource === 'raster') ? '' : 'none';
-    if ($('settings-bm-geographic-vector-group')) $('settings-bm-geographic-vector-group').style.display = (geographic && geographicSource === 'vector') ? '' : 'none';
-
-    const showCountries = $('set-bm-geographic-countries-on')?.checked !== false;
-    for (const id of ['set-bm-geographic-country-scale', 'set-bm-geographic-country-stroke', 'set-bm-geographic-country-width', 'set-bm-geographic-country-opacity']) {
-      if ($(id)) $(id).disabled = !showCountries;
-    }
   }
 
   function _normalizeScale(value, fallback = '50m') {
@@ -1091,462 +763,156 @@ export async function app(opts = {}) {
     if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
   }
 
-  // Wire all settings inputs for live update.
-  // 'input' fires on every slider tick/keystroke — debounce to avoid
-  // thrashing the renderer while the user is still dragging.
-  let _settingsInputTimer = null;
-  settingsPanel?.addEventListener('input', () => {
-    clearTimeout(_settingsInputTimer);
-    _settingsInputTimer = setTimeout(() => {
-      const layer = layers.find(l => l.id === selectedId);
-      if (layer) { _readSettingsFromUI(layer); _renderLayerList(); _render(); _saveState(); }
-    }, 150);
-  });
-  // 'change' fires when the user commits (mouseup, blur, etc.) — respond immediately.
-  settingsPanel?.addEventListener('change', () => {
-    clearTimeout(_settingsInputTimer);
-    const layer = layers.find(l => l.id === selectedId);
-    if (layer) { _readSettingsFromUI(layer); _renderLayerList(); _render(); _saveState(); }
+  bindSettingsPanelHandlers({
+    settingsPanel,
+    getSelectedLayer: () => layers.find(l => l.id === selectedId),
+    applyLayer: layer => {
+      readSettingsFromLayerUI({
+        layer,
+        layerTypes: LAYER_TYPES,
+        getEl: $,
+        normalizeScale: _normalizeScale,
+        isLayoutMode: _layoutMode,
+        switchToCanvas: () => renderer.switchToCanvas?.(renderer.getZoomTransform?.()),
+      });
+      _renderLayerList();
+      _render();
+      _saveState();
+    },
+    debounceMs: 150,
   });
 
   // ── Import modal ─────────────────────────────────────────────────────
   const importOverlay = $('import-file-overlay');
   const treeMapOverlay = $('tree-map-overlay');
   let _importType = 'auto';
+  const importUiController = createImportUiController({
+    getEl: $,
+    importOverlay,
+    wireDropZone,
+    onImportFile: file => _importFile(file),
+    setImportType: value => { _importType = value; },
+  });
 
   // ── Layout mode ──────────────────────────────────────────────────────
   const welcomeOverlay = $('welcome-overlay');
+  const layoutModeController = createLayoutModeController({
+    documentRef: document,
+    getEl: $,
+    getLayoutMode: () => _layoutMode,
+    setLayoutMode: value => { _layoutMode = !!value; },
+    mapViewport,
+    layerManager,
+    getLayers: () => layers,
+    layerTypes: LAYER_TYPES,
+    panelController,
+    showSettingsForLayer: id => _showSettingsForLayer(id),
+    setSelectedId: id => { selectedId = id; },
+    getSelectedId: () => selectedId,
+    clearLayoutCountryInteraction: opts => _clearLayoutCountryInteraction(opts),
+    syncBasemapCountryInteractionRuntime: () => _syncBasemapCountryInteractionRuntime(),
+    getCountryFeatureCache: scale => _getCountryFeatureCache(scale),
+    activeCountryScale: () => _activeCountryScale(),
+    renderLayerList: () => _renderLayerList(),
+    render: () => _render(),
+    saveState: () => _saveState(),
+    getZoomTransform: () => renderer.getZoomTransform?.(),
+    getViewportSize: () => _viewportSize(),
+    standardLayerDefs: NE_STANDARD_LAYERS,
+    mapOutlines: MAP_OUTLINES,
+    fetchImpl: fetch,
+    topojson,
+    createLayer,
+    escapeHtml: _escapeHtml,
+  });
 
   function _enterLayoutMode() {
-    if (_layoutMode) return;
-    _layoutMode = true;
-
-    // Save and hide all non-basemap layers while editing basemap layout.
-    _preLayoutVisibilities = {};
-    for (const layer of layers) {
-      if (layer.type !== LAYER_TYPES.BASEMAP) {
-        _preLayoutVisibilities[layer.id] = layer.visible;
-        layer.visible = false;
-      }
-    }
-
-    // Force-select the basemap layer and show its settings
-    const basemap = layers.find(l => l.type === LAYER_TYPES.BASEMAP);
-    if (basemap) {
-      selectedId = basemap.id;
-      _openPanel(settingsPanel, 'settings-pinned');
-      _showSettingsForLayer(selectedId);
-    }
-
-    // Show the layer panel and standard layers section
-    _openPanel(layerPanel);
-    const stdLayersEl = $('layout-std-layers');
-    if (stdLayersEl) {
-      stdLayersEl.style.display = '';
-      _populateStandardLayers();
-    }
-
-    document.body.classList.add('layout-mode');
-    $('btn-layout-mode')?.classList.add('active');
-    _clearLayoutCountryInteraction({ keepSelection: false });
-    _syncBasemapCountryInteractionRuntime();
-    _getCountryFeatureCache(_activeCountryScale()).catch(() => {});
-    _renderLayerList();
-    _render();
-    _saveState();
+    layoutModeController.enterLayoutMode();
   }
 
   function _exitLayoutMode() {
-    if (!_layoutMode) return;
-    _layoutMode = false;
-
-    // Restore layer visibilities that were captured on layout entry.
-    for (const layer of layers) {
-      if (_preLayoutVisibilities[layer.id] !== undefined) {
-        layer.visible = _preLayoutVisibilities[layer.id];
-      }
-    }
-    _preLayoutVisibilities = {};
-
-    // Hide the standard layers section
-    const stdLayersEl = $('layout-std-layers');
-    if (stdLayersEl) stdLayersEl.style.display = 'none';
-
-    document.body.classList.remove('layout-mode');
-    $('btn-layout-mode')?.classList.remove('active');
-    _clearLayoutCountryInteraction({ keepSelection: false });
-
-    _renderLayerList();
-    _showSettingsForLayer(selectedId);
-    _render();
-    _saveState();
+    layoutModeController.exitLayoutMode();
   }
 
-  function _populateStandardLayers() {
-    const list = $('std-layers-list');
-    if (!list) return;
-    list.innerHTML = '';
-    for (const def of NE_STANDARD_LAYERS) {
-      const btn = document.createElement('button');
-      btn.className = 'sx-std-layer-btn';
-      btn.dataset.neId = def.id;
-      btn.innerHTML = `<i class="bi bi-plus-lg me-1"></i>${_escapeHtml(def.name)}`;
-      btn.title = `Add ${def.name} as a GeoJSON layer`;
-      list.appendChild(btn);
-    }
-  }
+  layoutModeController.bindStandardLayerListClicks();
 
-  $('std-layers-list')?.addEventListener('click', async e => {
-    const btn = e.target.closest('[data-ne-id]');
-    if (!btn) return;
-    const def = NE_STANDARD_LAYERS.find(d => d.id === btn.dataset.neId);
-    if (!def) return;
-
-    btn.disabled = true;
-    btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Loading…';
-
-    try {
-      // Determine which file to fetch
-      const outlineId = def.landId || def.countriesId;
-      const urlEntry = MAP_OUTLINES.find(o => o.id === outlineId);
-      const url = urlEntry?.url;
-      if (!url) throw new Error('No URL for ' + outlineId);
-
-      const topo = await fetch(url).then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); });
-      const key  = Object.keys(topo.objects)[0];
-      const geoData = topojson.feature(topo, topo.objects[key]);
-
-      const newLayer = createLayer(LAYER_TYPES.GEOJSON, def.name, geoData);
-      // Insert above basemap, below frame
-      const frameIdx = _frameIndex();
-      layers.splice(frameIdx, 0, newLayer);
-      _ensureFixedBoundaryLayers();
-      _preLayoutVisibilities[newLayer.id] = true; // will be visible on exit
-
-      _populateStandardLayers(); // re-render buttons
-      _renderLayerList();
-      _render();
-      _saveState();
-    } catch (err) {
-      console.error('Failed to load standard layer:', err);
-      btn.disabled = false;
-      btn.innerHTML = `<i class="bi bi-exclamation-triangle me-1"></i>${_escapeHtml(def.name)}`;
-    }
+  const welcomeOverlayController = createWelcomeOverlayController({
+    overlay: welcomeOverlay,
+    getLayers: () => layers,
+    layerTypes: LAYER_TYPES,
+    normalizeScale: _normalizeScale,
+    enterLayoutMode: () => _enterLayoutMode(),
+    render: () => _render(),
   });
 
   // Welcome overlay (shown on first load — no saved state)
   function _showWelcome() {
-    if (!welcomeOverlay) return;
-    welcomeOverlay.style.display = '';
-    _render(); // render default map behind it
+    welcomeOverlayController.showWelcome();
   }
-
-  welcomeOverlay?.querySelectorAll('[data-bmmode]').forEach(card => {
-    card.addEventListener('click', () => {
-      const mode = card.dataset.bmmode;
-      const basemap = layers.find(l => l.type === LAYER_TYPES.BASEMAP);
-      if (basemap) {
-        basemap.style.baseMode = mode || 'globe';
-        if (mode === 'geographic') {
-          basemap.style.projection = 'geoEquirectangular';
-          basemap.style.datum = 'WGS84';
-          basemap.style.geographicSourceType = basemap.style.geographicSourceType || 'raster';
-          basemap.style.geographicRasterSet = basemap.style.geographicRasterSet || 'NE1';
-          basemap.style.basemapSource = `ne${_normalizeScale(basemap.style.geographicVectorScale || '50m').replace('m', '')}`;
-        } else {
-          basemap.style.projection = basemap.style.projection || 'geoNaturalEarth1';
-          basemap.style.basemapSource = basemap.style.basemapSource || 'd3';
-        }
-      }
-      welcomeOverlay.style.display = 'none';
-      _enterLayoutMode();
-    });
-  });
+  welcomeOverlayController.bindModeCards();
 
   function _openImportModal(type) {
-    _importType = type || 'auto';
-    $('import-layer-type').value = _importType;
-    importOverlay?.classList.add('open');
+    importUiController.openImportModal(type);
   }
 
-  function _closeImportModal() { importOverlay?.classList.remove('open'); }
+  function _closeImportModal() { importUiController.closeImportModal(); }
 
-  $('btn-import-close')?.addEventListener('click', _closeImportModal);
-  $('btn-import-auto')?.addEventListener('click', () => _openImportModal('auto'));
-  $('btn-file-choose')?.addEventListener('click', () => $('file-input')?.click());
-  $('file-input')?.addEventListener('change', e => {
-    const file = e.target.files?.[0];
-    if (file) { _importFile(file); _closeImportModal(); }
-  });
-
-  // Wire drop zone in modal
-  const dropZone = $('file-drop-zone');
-  if (dropZone) wireDropZone(dropZone, file => { if (file) { _importFile(file); _closeImportModal(); } });
+  importUiController.bindImportUi();
 
   // Wire drop on map SVG
   const canvasWrapper = $('canvas-wrapper');
-  if (canvasWrapper) wireDropZone(canvasWrapper, file => { if (file) _importFile(file); }, { checkContains: true });
+  importUiController.bindCanvasDrop(canvasWrapper);
 
   const zoomBox = document.createElement('div');
   zoomBox.className = 'sx-zoom-box';
   zoomBox.style.display = 'none';
   canvasWrapper?.appendChild(zoomBox);
 
-  // Space + drag pans the projection center (lon/lat), not the zoom transform.
-  let _spaceHeld = false;
-  let _cmdZoomDragging = false;
-  let _projectionDragging = false;
-  let _lastDragX = 0;
-  let _lastDragY = 0;
-  let _cmdZoomStartX = 0;
-  let _cmdZoomStartY = 0;
-  let _cmdZoomCurrentX = 0;
-  let _cmdZoomCurrentY = 0;
-  let _statusBeforeSpaceHint = '';
-  let _pointerInCanvasWrapper = false;
-
-  function _isAltZoomModifier(e) {
-    return !!e.altKey;
-  }
-
-  function _isCanvasInteractionTarget(target) {
-    if (!canvasWrapper || !target) return false;
-    return canvasWrapper.contains(target);
-  }
-
-  function _isBrowserZoomHotkey(e) {
-    if (!(e.metaKey || e.ctrlKey)) return false;
-    if (e.altKey) return false;
-    const key = String(e.key || '').toLowerCase();
-    return key === '+' || key === '=' || key === '-' || key === '_';
-  }
-
-  function _setAltZoomCursorState(ready, dragging = false) {
-    if (!canvasWrapper) return;
-    const on = !!ready && !_spaceHeld;
-    canvasWrapper.classList.toggle('sx-alt-zoom-ready', on);
-    canvasWrapper.classList.toggle('sx-alt-zoom-dragging', on && !!dragging);
-  }
-
-  function _toLocalPoint(e) {
-    const rect = canvasWrapper?.getBoundingClientRect();
-    if (!rect) return null;
-    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
-    const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
-    return { x, y, width: rect.width, height: rect.height };
-  }
+  let mapInteractionController = null;
+  const geojsonFeatureInteraction = createGeojsonFeatureInteractionController({
+    canvasWrapper,
+    d3,
+    renderer,
+    mapViewport,
+    interactionState: countryInteractionState,
+    statusStats,
+    computeFrameRect,
+    getFrameStyle: () => layers.find(l => l.type === LAYER_TYPES.FRAME)?.style,
+    getActiveFeatureScale: () => selectedId,
+    getFeatureCache: () => _getSelectedGeojsonFeatureCache(),
+    getFeatureId: (feature, index) => _geojsonFeatureId(feature, index),
+    getFeatureName: (feature, index) => _geojsonFeatureName(feature, index),
+    isFeatureHoverEnabled: () => _isCountryHoverEnabled(),
+    constrainViewModeTransform: transform => _constrainViewModeTransform(transform),
+    recordZoomTransform: (transform, opts) => _recordZoomTransform(transform, opts),
+    queueRender: () => _queueRender(),
+    updateFallbackStatus: () => _updateSelectedGeoJSONStatus(),
+    featureLabel: 'Feature',
+  });
 
   function _eventToProjectedPoint(e) {
-    const rect = canvasWrapper?.getBoundingClientRect();
-    if (!rect) return null;
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-    const t = renderer.getZoomTransform?.() || d3.zoomIdentity;
-    const px = (x - t.x) / t.k;
-    const py = (y - t.y) / t.k;
-    return [px, py];
+    return geojsonFeatureInteraction.eventToProjectedPoint(e);
   }
 
   async function _hitTestCountryFromPointerEvent(e) {
-    if (!_isCountryHoverEnabled()) return null;
-    const projected = _eventToProjectedPoint(e);
-    if (!projected) return null;
-    const projection = renderer.getProjection?.();
-    const lonLat = projection?.invert?.(projected);
-    if (!lonLat) return null;
-
-    const cache = await _getCountryFeatureCache(_activeCountryScale());
-    if (!cache?.features?.length) return null;
-
-    for (const feature of cache.features) {
-      try {
-        if (d3.geoContains(feature, lonLat)) {
-          const id = _countryFeatureId(feature);
-          if (!id) return null;
-          return { id, name: cache.nameById.get(id) || _countryFeatureName(feature) };
-        }
-      } catch {
-        // Ignore malformed geometries.
-      }
-    }
-
-    return null;
-  }
-
-  function _layoutFrameRect(width, height, frameStyle) {
-    const preset = frameStyle?.aspectPreset || 'slideWide';
-    const ratio = FRAME_ASPECTS[preset]?.ratio || (16 / 9);
-    const margin = Math.max(0, Number(frameStyle?.margin ?? 24));
-    const availW = Math.max(1, width - (2 * margin));
-    const availH = Math.max(1, height - (2 * margin));
-    let w = availW;
-    let h = w / ratio;
-    if (h > availH) {
-      h = availH;
-      w = h * ratio;
-    }
-    return { x: (width - w) / 2, y: (height - h) / 2, width: w, height: h };
+    return geojsonFeatureInteraction.hitTestFeatureFromPointerEvent(e);
   }
 
   async function _zoomToSelectedCountries() {
-    if (!_layoutSelectedCountryIds.size) return;
-    const cache = await _getCountryFeatureCache(_activeCountryScale());
-    if (!cache) return;
-
-    const selectedFeatures = Array.from(_layoutSelectedCountryIds)
-      .map(id => cache.byId.get(id))
-      .filter(Boolean);
-    if (!selectedFeatures.length) return;
-
-    const path = renderer.getPath?.();
-    const wrapper = $('canvas-wrapper');
-    if (!path || !wrapper) return;
-
-    const featureCollection = { type: 'FeatureCollection', features: selectedFeatures };
-    let bounds;
-    try {
-      bounds = path.bounds(featureCollection);
-    } catch {
-      return;
-    }
-    if (!bounds) return;
-
-    const minX = bounds[0]?.[0];
-    const minY = bounds[0]?.[1];
-    const maxX = bounds[1]?.[0];
-    const maxY = bounds[1]?.[1];
-    if (![minX, minY, maxX, maxY].every(Number.isFinite)) return;
-
-    const frameLayer = layers.find(l => l.type === LAYER_TYPES.FRAME);
-    const frame = _layoutFrameRect(wrapper.clientWidth, wrapper.clientHeight, frameLayer?.style);
-    const padding = Math.max(8, Math.min(frame.width, frame.height) * 0.06);
-    const boxW = Math.max(1, maxX - minX);
-    const boxH = Math.max(1, maxY - minY);
-    const innerW = Math.max(1, frame.width - (2 * padding));
-    const innerH = Math.max(1, frame.height - (2 * padding));
-    const k = Math.max(0.5, Math.min(30, Math.min(innerW / boxW, innerH / boxH)));
-
-    const cx = (minX + maxX) / 2;
-    const cy = (minY + maxY) / 2;
-    const tx = (frame.x + frame.width / 2) - (cx * k);
-    const ty = (frame.y + frame.height / 2) - (cy * k);
-    const target = d3.zoomIdentity.translate(tx, ty).scale(k);
-
-    _suppressZoomHistory = true;
-    try {
-      renderer.syncZoomTransform(target);
-    } finally {
-      _suppressZoomHistory = false;
-    }
-    _recordZoomTransform(target, { immediate: true });
-    _queueRender();
-    _updateCountryStatusBar();
-  }
-
-  function _updateZoomBox() {
-    if (!_cmdZoomDragging || !zoomBox) return;
-    const x = Math.min(_cmdZoomStartX, _cmdZoomCurrentX);
-    const y = Math.min(_cmdZoomStartY, _cmdZoomCurrentY);
-    const w = Math.abs(_cmdZoomCurrentX - _cmdZoomStartX);
-    const h = Math.abs(_cmdZoomCurrentY - _cmdZoomStartY);
-    zoomBox.style.display = '';
-    zoomBox.style.left = `${x}px`;
-    zoomBox.style.top = `${y}px`;
-    zoomBox.style.width = `${w}px`;
-    zoomBox.style.height = `${h}px`;
-  }
-
-  function _hideZoomBox() {
-    if (zoomBox) zoomBox.style.display = 'none';
-  }
-
-  function _applyBoxZoom(x0, y0, x1, y1, viewportW, viewportH) {
-    const left = Math.min(x0, x1);
-    const right = Math.max(x0, x1);
-    const top = Math.min(y0, y1);
-    const bottom = Math.max(y0, y1);
-    const boxW = right - left;
-    const boxH = bottom - top;
-    if (boxW < 6 || boxH < 6) return;
-
-    const t = renderer.getZoomTransform();
-    const scaleX = viewportW / boxW;
-    const scaleY = viewportH / boxH;
-    const nextK = Math.max(0.5, Math.min(30, t.k * Math.min(scaleX, scaleY)));
-
-    const centerScreenX = (left + right) / 2;
-    const centerScreenY = (top + bottom) / 2;
-    const worldX = (centerScreenX - t.x) / t.k;
-    const worldY = (centerScreenY - t.y) / t.k;
-    const targetX = (viewportW / 2) - (worldX * nextK);
-    const targetY = (viewportH / 2) - (worldY * nextK);
-
-    const target = d3.zoomIdentity.translate(targetX, targetY).scale(nextK);
-    _suppressZoomHistory = true;
-    try {
-      renderer.syncZoomTransform(target);
-    } finally {
-      _suppressZoomHistory = false;
-    }
-    _recordZoomTransform(target, { immediate: true });
-    _updateSelectedGeoJSONStatus(target.k);
-    _queueRender();
-  }
-
-  function _getBasemapCenter() {
-    return layers.find(l => l.type === LAYER_TYPES.BASEMAP)?.style?.center || [0, 0];
-  }
-
-  function _formatCoord(v, posLabel, negLabel) {
-    const abs = Math.abs(Number(v) || 0).toFixed(2);
-    return `${abs}${v >= 0 ? posLabel : negLabel}`;
-  }
-
-  function _setSpaceHint(lonOnly = false) {
-    if (!statusStats) return;
-    const [lon, lat] = _getBasemapCenter();
-    statusStats.textContent = `Space-drag${lonOnly ? ' (lon only)' : ''}: center ${_formatCoord(lat, 'N', 'S')} ${_formatCoord(lon, 'E', 'W')}`;
-  }
-
-  function _restoreStatusAfterSpaceHint() {
-    if (!statusStats) return;
-    statusStats.innerHTML = _statusBeforeSpaceHint || '';
-    if (!statusStats.textContent) _updateSelectedGeoJSONStatus();
-  }
-
-  function _activeZoomK() {
-    const t = (_usingCanvas ? canvasRenderer : svgRenderer).getZoomTransform?.();
-    return t?.k || 1;
+    await geojsonFeatureInteraction.zoomToSelectedFeatures();
   }
 
   function _appendRasterTierStatus(baseText, zoomK, asHtml = false) {
-    const prefix = baseText ? `${baseText} | ` : '';
-    if (!_isGeographicRasterMode()) return baseText || '';
-    const bm = layers.find(l => l.type === LAYER_TYPES.BASEMAP)?.style || {};
-    const setName = String(bm.geographicRasterSet || 'NE1').toUpperCase().replace(/[^A-Z0-9_-]/g, '');
-    const threshold = Number(bm.geographicRasterSwitchZoom ?? 2.5);
-    const k = Number.isFinite(zoomK) ? zoomK : _activeZoomK();
-    const forcedTier = String(bm.geographicRasterForceTier || 'auto').toLowerCase();
-    const tier = forcedTier === 'hr' ? 'HR' : forcedTier === '50m' ? '50M' : (k >= threshold ? 'HR' : '50M');
-    const forceNote = forcedTier === 'auto' ? '' : ' forced';
-    if (!asHtml) {
-      const text = `Raster ${setName}: ${tier}${forceNote} (zoom ${k.toFixed(2)} / switch ${threshold.toFixed(2)})`;
-      return `${prefix}${text}`;
-    }
-    const tierClass = tier === 'HR' ? 'sx-raster-tier--hr' : 'sx-raster-tier--50m';
-    const forcedClass = forcedTier === 'auto' ? '' : ' sx-raster-tier--forced';
-    const text = `Raster ${setName}: <button type="button" class="sx-raster-tier ${tierClass}${forcedClass}" data-raster-tier-toggle="1" title="Click to force alternate raster tier (Shift-click for auto)">${tier}</button> <span class="sx-raster-zoom">${forceNote}(zoom ${k.toFixed(2)} / switch ${threshold.toFixed(2)})</span>`;
-    return `${prefix}${text}`;
+    return basemapStatusController.appendRasterTierStatus(baseText, zoomK, asHtml);
   }
 
   function _updateSelectedGeoJSONStatus(zoomK = null) {
     _updateBasemapReadonlyPanel(zoomK);
-    if (_layoutMode && _layoutHoveredCountryName && !_spaceHeld) {
+    if (countryInteractionState.hoveredName() && !mapInteractionController?.isSpaceHeld() && _isCountryHoverEnabled()) {
       _updateCountryStatusBar();
       return;
     }
-    if (!statusStats || _spaceHeld) return;
+    if (!statusStats || mapInteractionController?.isSpaceHeld()) return;
     const selected = layers.find(l => l.id === selectedId);
     if (!selected || selected.type !== LAYER_TYPES.GEOJSON) {
       if (_isGeographicRasterMode()) {
@@ -1590,238 +956,39 @@ export async function app(opts = {}) {
     return tag === 'input' || tag === 'textarea' || tag === 'select';
   }
 
-  window.addEventListener('keydown', e => {
-    if (e.code !== 'Space') return;
-    if (_isEditableTarget(e.target)) return;
-    if (!_spaceHeld) {
-      _statusBeforeSpaceHint = statusStats?.innerHTML || '';
-    }
-    e.preventDefault();
-    _spaceHeld = true;
-    _setAltZoomCursorState(false, false);
-    renderer.setSpacePanActive(true);
-    _setSpaceHint();
-  });
-
-  window.addEventListener('keydown', e => {
-    if (_isAltZoomModifier(e)) {
-      _setAltZoomCursorState(true, _cmdZoomDragging);
-    }
-  });
-
-  window.addEventListener('keyup', e => {
-    if (e.code !== 'Space') return;
-    _spaceHeld = false;
-    _projectionDragging = false;
-    renderer.setSpacePanActive(false);
-    _restoreStatusAfterSpaceHint();
-    _setAltZoomCursorState(false, false);
-    _saveState();
-  });
-
-  window.addEventListener('keyup', e => {
-    if (!_isAltZoomModifier(e)) {
-      _setAltZoomCursorState(false, false);
-    }
+  mapInteractionController = createMapInteractionController({
+    windowRef: window,
+    canvasWrapper,
+    statusStats,
+    d3,
+    renderer,
+    mapViewport,
+    countryInteractionState,
+    zoomBox,
+    getBasemapCenter: () => basemapController.basemapCenter(),
+    isEditableTarget: _isEditableTarget,
+    isCountryHoverEnabled: _isCountryHoverEnabled,
+    hitTestCountryFromPointerEvent: _hitTestCountryFromPointerEvent,
+    zoomToSelectedCountries: _zoomToSelectedCountries,
+    syncBasemapCountryInteractionRuntime: _syncBasemapCountryInteractionRuntime,
+    updateCountryStatusBar: _updateCountryStatusBar,
+    queueRender: _queueRender,
+    saveState: _saveState,
+    updateSelectedGeoJSONStatus: _updateSelectedGeoJSONStatus,
+    constrainViewModeTransform: _constrainViewModeTransform,
+    recordZoomTransform: _recordZoomTransform,
+    isGeographicRasterMode: _isGeographicRasterMode,
+    findBasemapLayer: () => layers.find(l => l.type === LAYER_TYPES.BASEMAP),
   });
 
   statusStats?.addEventListener('click', e => {
     const toggle = e.target.closest('[data-raster-tier-toggle]');
-    if (!toggle || !_isGeographicRasterMode()) return;
-    const basemap = layers.find(l => l.type === LAYER_TYPES.BASEMAP);
-    if (!basemap) return;
-    const style = basemap.style || {};
-    const current = String(style.geographicRasterForceTier || 'auto').toLowerCase();
-    if (e.shiftKey) {
-      style.geographicRasterForceTier = 'auto';
-    } else if (current === 'hr') {
-      style.geographicRasterForceTier = '50m';
-    } else if (current === '50m') {
-      style.geographicRasterForceTier = 'hr';
-    } else {
-      const displayed = toggle.textContent?.trim().toUpperCase();
-      style.geographicRasterForceTier = displayed === 'HR' ? '50m' : 'hr';
-    }
-    _updateSelectedGeoJSONStatus();
-    _queueRender();
-    _saveState();
+    if (!toggle) return;
+    mapInteractionController?.cycleRasterTier({
+      shiftKey: !!e.shiftKey,
+      displayedTier: toggle.textContent,
+    });
   });
-
-  canvasWrapper?.addEventListener('pointerdown', e => {
-    _pointerInCanvasWrapper = true;
-    if (_isAltZoomModifier(e) && !_spaceHeld) {
-      const p = _toLocalPoint(e);
-      if (!p) return;
-      _cmdZoomDragging = true;
-      _setAltZoomCursorState(true, true);
-      _cmdZoomStartX = _cmdZoomCurrentX = p.x;
-      _cmdZoomStartY = _cmdZoomCurrentY = p.y;
-      _updateZoomBox();
-      canvasWrapper.setPointerCapture?.(e.pointerId);
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
-    if (!_spaceHeld) return;
-    _projectionDragging = true;
-    _lastDragX = e.clientX;
-    _lastDragY = e.clientY;
-    canvasWrapper.setPointerCapture?.(e.pointerId);
-    e.preventDefault();
-    e.stopPropagation();
-  });
-
-  canvasWrapper?.addEventListener('pointermove', e => {
-    _setAltZoomCursorState(_isAltZoomModifier(e), _cmdZoomDragging);
-
-    if (_cmdZoomDragging) {
-      const p = _toLocalPoint(e);
-      if (!p) return;
-      _cmdZoomCurrentX = p.x;
-      _cmdZoomCurrentY = p.y;
-      _updateZoomBox();
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
-
-    if (!_projectionDragging) return;
-    const dx = e.clientX - _lastDragX;
-    const dy = e.clientY - _lastDragY;
-    _lastDragX = e.clientX;
-    _lastDragY = e.clientY;
-
-    const lonOnly = e.shiftKey;
-    const moved = lonOnly
-      ? renderer.panProjectionLongitudeByPixels(dx)
-      : renderer.panProjectionByPixels(dx, dy);
-
-    if (moved) {
-      _setSpaceHint(lonOnly);
-      _queueRender();
-    }
-
-    e.preventDefault();
-    e.stopPropagation();
-  });
-
-  const _endProjectionDrag = e => {
-    if (!_projectionDragging) return;
-    _projectionDragging = false;
-    _saveState();
-    e?.preventDefault?.();
-    e?.stopPropagation?.();
-  };
-
-  canvasWrapper?.addEventListener('pointerup', _endProjectionDrag);
-  canvasWrapper?.addEventListener('pointerup', e => {
-    if (!_cmdZoomDragging) return;
-    const p = _toLocalPoint(e) || { x: _cmdZoomCurrentX, y: _cmdZoomCurrentY, width: canvasWrapper.clientWidth, height: canvasWrapper.clientHeight };
-    _cmdZoomCurrentX = p.x;
-    _cmdZoomCurrentY = p.y;
-    _applyBoxZoom(_cmdZoomStartX, _cmdZoomStartY, _cmdZoomCurrentX, _cmdZoomCurrentY, p.width, p.height);
-    _cmdZoomDragging = false;
-    _hideZoomBox();
-    _setAltZoomCursorState(_isAltZoomModifier(e), false);
-    e.preventDefault();
-    e.stopPropagation();
-  });
-  canvasWrapper?.addEventListener('pointercancel', _endProjectionDrag);
-  canvasWrapper?.addEventListener('pointercancel', () => {
-    _cmdZoomDragging = false;
-    _hideZoomBox();
-    _setAltZoomCursorState(false, false);
-  });
-  canvasWrapper?.addEventListener('pointerleave', e => {
-    _pointerInCanvasWrapper = false;
-    _setAltZoomCursorState(false, false);
-    if (_projectionDragging && !_spaceHeld) _endProjectionDrag(e);
-    if (_layoutHoveredCountryId) {
-      _layoutHoveredCountryId = null;
-      _layoutHoveredCountryName = '';
-      _syncBasemapCountryInteractionRuntime();
-      _queueRender();
-      _updateCountryStatusBar();
-    }
-  });
-
-  canvasWrapper?.addEventListener('pointerenter', () => {
-    _pointerInCanvasWrapper = true;
-  });
-
-  // Prevent browser page zoom while interacting with the map surface.
-  canvasWrapper?.addEventListener('wheel', e => {
-    if (e.ctrlKey || e.metaKey) e.preventDefault();
-  }, { passive: false });
-
-  // Safari trackpad pinch/gesture events can trigger page zoom unless blocked.
-  const _preventBrowserGestureZoom = e => {
-    if (_pointerInCanvasWrapper || _isCanvasInteractionTarget(e.target) || _cmdZoomDragging || _projectionDragging) {
-      e.preventDefault();
-    }
-  };
-  window.addEventListener('gesturestart', _preventBrowserGestureZoom, { passive: false, capture: true });
-  window.addEventListener('gesturechange', _preventBrowserGestureZoom, { passive: false, capture: true });
-  window.addEventListener('gestureend', _preventBrowserGestureZoom, { passive: false, capture: true });
-
-  // Block browser zoom hotkeys while focus/interaction is inside the map area.
-  window.addEventListener('keydown', e => {
-    if (!_isBrowserZoomHotkey(e)) return;
-    if (_pointerInCanvasWrapper || _isCanvasInteractionTarget(e.target)) {
-      e.preventDefault();
-    }
-  }, { capture: true });
-
-  canvasWrapper?.addEventListener('pointermove', async e => {
-    if (_projectionDragging || _cmdZoomDragging || _spaceHeld) return;
-    if (!_isCountryHoverEnabled()) {
-      if (_layoutHoveredCountryId) {
-        _layoutHoveredCountryId = null;
-        _layoutHoveredCountryName = '';
-        _syncBasemapCountryInteractionRuntime();
-        _queueRender();
-        _updateCountryStatusBar();
-      }
-      return;
-    }
-
-    const hit = await _hitTestCountryFromPointerEvent(e);
-    const nextId = hit?.id || null;
-    if (nextId === _layoutHoveredCountryId) return;
-    _layoutHoveredCountryId = nextId;
-    _layoutHoveredCountryName = hit?.name || '';
-    _syncBasemapCountryInteractionRuntime();
-    _queueRender();
-    _updateCountryStatusBar();
-  });
-
-  canvasWrapper?.addEventListener('click', async e => {
-    if (!_isCountryHoverEnabled() || _projectionDragging || _cmdZoomDragging || _spaceHeld) return;
-    const hit = await _hitTestCountryFromPointerEvent(e);
-    if (!hit?.id) return;
-    const toggle = e.metaKey || e.ctrlKey;
-
-    if (toggle) {
-      if (_layoutSelectedCountryIds.has(hit.id)) _layoutSelectedCountryIds.delete(hit.id);
-      else _layoutSelectedCountryIds.add(hit.id);
-    } else {
-      _layoutSelectedCountryIds = new Set([hit.id]);
-    }
-
-    _layoutHoveredCountryId = hit.id;
-    _layoutHoveredCountryName = hit.name;
-    _syncBasemapCountryInteractionRuntime();
-    _queueRender();
-    _updateCountryStatusBar();
-    _saveState();
-  }, { capture: true });
-
-  canvasWrapper?.addEventListener('dblclick', e => {
-    if (!_isCountryHoverEnabled() || !_layoutSelectedCountryIds.size) return;
-    e.preventDefault();
-    e.stopPropagation();
-    _zoomToSelectedCountries();
-  }, { capture: true });
 
   // ── File import logic ────────────────────────────────────────────────
 
@@ -1840,72 +1007,13 @@ export async function app(opts = {}) {
 
   async function _processImport(text, filename) {
     const forced = $('import-layer-type')?.value || _importType;
-    const detected = detectFileType(text, filename);
-    let layerType, data;
-
-    if (forced !== 'auto') {
-      layerType = forced;
-    } else {
-      // Map detected type to layer type
-      switch (detected.type) {
-        case 'topojson':
-        case 'geojson':
-          layerType = LAYER_TYPES.GEOJSON;
-          break;
-        case 'points-json':
-        case 'csv':
-          layerType = LAYER_TYPES.POINTS;
-          break;
-        case 'newick':
-          layerType = LAYER_TYPES.TREE;
-          break;
-        default:
-          console.warn('Could not auto-detect type for', filename);
-          layerType = LAYER_TYPES.GEOJSON; // fallback
-      }
+    const result = await layerImportService.processImportText(text, filename, forced);
+    if (!result || result.cancelled || !result.layer) {
+      $('status-stats').textContent = result?.statusText || `Import cancelled: ${filename}`;
+      return;
     }
 
-    // Parse data
-    switch (layerType) {
-      case LAYER_TYPES.GEOJSON:
-        data = parseGeoData(detected.data, topojson);
-        break;
-      case LAYER_TYPES.POINTS:
-        data = detected.type === 'csv' ? parseCSV(detected.data) :
-               Array.isArray(detected.data) ? detected.data : parseCSV(text);
-        break;
-      case LAYER_TYPES.TREE: {
-        const analysis = analyzeTreeAnnotations(detected.data);
-        let mapping = {
-          longitudeKey: analysis.suggested.longitudeKey || '',
-          latitudeKey: analysis.suggested.latitudeKey || '',
-          hpdKey: analysis.suggested.hpdKey || '',
-          locationKey: analysis.suggested.locationKey || '',
-          posteriorKey: analysis.suggested.posteriorKey || '',
-        };
-
-        if (analysis.hasBeastAnnotations) {
-          const chosen = await _openTreeMappingDialog(analysis);
-          if (!chosen) {
-            $('status-stats').textContent = `Import cancelled: ${filename}`;
-            return;
-          }
-          mapping = chosen;
-        }
-
-        data = parseTreeData(detected.data, mapping);
-        break;
-      }
-      default:
-        data = detected.data;
-    }
-
-    const name = filename.replace(/\.[^.]+$/, '');
-    const layer = createLayer(layerType, name, data);
-    if (/^admin[ _]?1$/i.test(name) || /^admin[ _]?2$/i.test(name)) {
-      layer.visible = false;
-    }
-    _applyNamedGeojsonPerformanceProfile(layer);
+    const layer = result.layer;
     layers.push(layer);
     _ensureFixedBoundaryLayers();
     selectedId = layer.id;
@@ -1914,28 +1022,7 @@ export async function app(opts = {}) {
     _showSettingsForLayer(selectedId);
     _render();
     _saveState();
-
-    if (layerType === LAYER_TYPES.TREE && data?.metadata) {
-      $('status-stats').textContent = `Imported: ${filename} (${data.metadata.nodeCount} nodes, ${data.metadata.branchCount} branches)`;
-    } else {
-      $('status-stats').textContent = `Imported: ${filename}`;
-    }
-  }
-
-  function _findAdmin1Index() {
-    return layers.findIndex(l =>
-      l.type === LAYER_TYPES.GEOJSON &&
-      /^admin[ _]?1$/i.test((l.name || '').trim()));
-  }
-
-  function _normalizedLayerName(layer) {
-    return (layer?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  }
-
-  function _isAlwaysOnGeoLayer(layer) {
-    if (!layer || layer.type !== LAYER_TYPES.GEOJSON) return false;
-    const n = _normalizedLayerName(layer);
-    return n === 'admin0';
+    $('status-stats').textContent = result.statusText || `Imported: ${filename}`;
   }
 
   function _isLockedLayer(layer) {
@@ -1943,292 +1030,47 @@ export async function app(opts = {}) {
     return layer.type === LAYER_TYPES.BASEMAP || layer.type === LAYER_TYPES.FRAME;
   }
 
-  function _applyNamedGeojsonPerformanceProfile(layer) {
-    if (!layer || layer.type !== LAYER_TYPES.GEOJSON) return;
-    const n = _normalizedLayerName(layer);
-
-    if (n === 'oceanmask' || n === 'oceans') {
-      layer.visible = true;
-      layer.style.autoPerf = true;
-      layer.style.simplify = 3;
-      layer.style.oceanFill = layer.style.oceanFill || layer.style.fill || '#0a3340';
-      layer.style.landFill = layer.style.landFill || '#1a3a2a';
-      layer.style.landBoundaryStroke = layer.style.landBoundaryStroke || '#4a8a5a';
-      layer.style.landBoundaryWidth = layer.style.landBoundaryWidth ?? 0.5;
-      return;
-    }
-
-    if (n === 'admin0' || n === 'countries') {
-      layer.visible = true;
-      layer.style.autoPerf = true;
-      layer.style.simplify = 2;
-      return;
-    }
-
-    if (n === 'admin1') {
-      layer.style.autoPerf = true;
-      layer.style.simplify = 2;
-      return;
-    }
-
-    if (n === 'admin2') {
-      layer.style.autoPerf = true;
-      layer.style.simplify = 3;
-    }
-  }
-
-  let _worldBankTopologyPromise = null;
-
-  async function _loadWorldBankTopology() {
-    if (!_worldBankTopologyPromise) {
-      _worldBankTopologyPromise = fetch('data/maps/WorldBank.json')
-        .then(response => {
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          return response.json();
-        });
-    }
-    return _worldBankTopologyPromise;
-  }
-
-  async function _loadDefaultOceansLayer() {
-    if (layers.some(l => l.type === LAYER_TYPES.GEOJSON && _normalizedLayerName(l) === 'oceans')) return;
-    try {
-      const json = await _loadWorldBankTopology();
-      const data = {
-        _sxFormat: 'topojson-object',
-        topology: json,
-        objectName: 'Ocean_Mask',
-      };
-      const layer = createLayer(LAYER_TYPES.GEOJSON, 'Oceans', data);
-      layer.style.fill = '#0a3340';
-      layer.style.fillOpacity = 0.22;
-      layer.style.stroke = '#0a3340';
-      layer.style.strokeWidth = 0;
-      layer.visible = true;
-      _applyNamedGeojsonPerformanceProfile(layer);
-
-      const frameIdx = _frameIndex();
-      const insertAt = frameIdx > 0 ? frameIdx : layers.length;
-      layers.splice(insertAt, 0, layer);
-      _ensureFixedBoundaryLayers();
-    } catch (err) {
-      console.warn('Could not auto-load Oceans layer:', err);
-    }
-  }
-
-  async function _loadDefaultCountriesLayer() {
-    if (layers.some(l => l.type === LAYER_TYPES.GEOJSON && _normalizedLayerName(l) === 'countries')) return;
-    try {
-      const json = await _loadWorldBankTopology();
-      const data = {
-        _sxFormat: 'topojson-object',
-        topology: json,
-        objectName: 'Admin_0',
-      };
-      const layer = createLayer(LAYER_TYPES.GEOJSON, 'Countries', data);
-      layer.style.fillOpacity = 0;
-      layer.style.stroke = '#6a6a6a';
-      layer.style.strokeWidth = 0.7;
-      layer.visible = true;
-      _applyNamedGeojsonPerformanceProfile(layer);
-
-      const frameIdx = layers.findIndex(l => l.type === LAYER_TYPES.FRAME);
-      const insertAt = frameIdx > 0 ? frameIdx : layers.length;
-      layers.splice(insertAt, 0, layer);
-      _ensureFixedBoundaryLayers();
-    } catch (err) {
-      console.warn('Could not auto-load Countries layer:', err);
-    }
-  }
-
-  async function _loadDefaultAdminDetailLayers() {
-    const items = [
-      { objectName: 'Admin_1', name: 'Admin1' },
-      { objectName: 'Admin_2', name: 'Admin2' },
-    ];
-
-    let topology = null;
-
-    for (const item of items) {
-      const exists = layers.some(l => l.type === LAYER_TYPES.GEOJSON && _normalizedLayerName(l) === item.name.toLowerCase().replace(/[^a-z0-9]/g, ''));
-      if (exists) continue;
-      try {
-        topology = topology || await _loadWorldBankTopology();
-        const data = {
-          _sxFormat: 'topojson-object',
-          topology,
-          objectName: item.objectName,
-        };
-        const layer = createLayer(LAYER_TYPES.GEOJSON, item.name, data);
-        layer.visible = false;
-        layer.style.fillOpacity = 0;
-        layer.style.stroke = item.name === 'Admin1' ? '#5d5d5d' : '#4d4d4d';
-        layer.style.strokeWidth = item.name === 'Admin1' ? 0.45 : 0.35;
-        _applyNamedGeojsonPerformanceProfile(layer);
-
-        const frameIdx = _frameIndex();
-        const insertAt = frameIdx > 0 ? frameIdx : layers.length;
-        layers.splice(insertAt, 0, layer);
-      } catch (err) {
-        console.warn(`Could not auto-load ${item.name} layer:`, err);
-      }
-    }
-
-    _ensureFixedBoundaryLayers();
-  }
-
-  async function _openTreeMappingDialog(analysis) {
-    if (!treeMapOverlay) return null;
-
-    const summary = $('tree-map-summary');
-    const lonSel = $('tree-map-lon');
-    const latSel = $('tree-map-lat');
-    const hpdSel = $('tree-map-hpd');
-    const locSel = $('tree-map-location');
-    const postSel = $('tree-map-posterior');
-    const btnClose = $('btn-tree-map-close');
-    const btnCancel = $('btn-tree-map-cancel');
-    const btnContinue = $('btn-tree-map-continue');
-
-    if (!lonSel || !latSel || !hpdSel || !locSel || !postSel || !btnContinue) {
-      return null;
-    }
-
-    const keys = analysis.annotationKeys || [];
-    const options = [''].concat(keys);
-    const defaultLat = keys.includes('location1')
-      ? 'location1'
-      : (analysis.suggested.latitudeKey || '');
-    const defaultLon = keys.includes('location2')
-      ? 'location2'
-      : (analysis.suggested.longitudeKey || '');
-
-    const fillSelect = (sel, selected, labelForNone = 'None') => {
-      sel.innerHTML = '';
-      for (const k of options) {
-        const opt = document.createElement('option');
-        opt.value = k;
-        opt.textContent = k || labelForNone;
-        if (k === selected) opt.selected = true;
-        sel.appendChild(opt);
-      }
-    };
-
-    fillSelect(latSel, defaultLat);
-    fillSelect(lonSel, defaultLon);
-    fillSelect(hpdSel, analysis.suggested.hpdKey || '');
-    fillSelect(locSel, analysis.suggested.locationKey || '');
-    fillSelect(postSel, analysis.suggested.posteriorKey || '');
-
-    if (summary) {
-      const mode = analysis.likelyContinuous && analysis.likelyDiscrete
-        ? 'continuous + discrete'
-        : analysis.likelyContinuous
-          ? 'continuous'
-          : analysis.likelyDiscrete
-            ? 'discrete'
-            : 'unknown';
-      summary.textContent = `Detected ${keys.length} annotation fields (${mode} phylogeography likely).`;
-    }
-
-    treeMapOverlay.classList.add('open');
-
-    return new Promise(resolve => {
-      const finish = (result) => {
-        treeMapOverlay.classList.remove('open');
-        btnContinue.removeEventListener('click', onContinue);
-        btnCancel?.removeEventListener('click', onCancel);
-        btnClose?.removeEventListener('click', onCancel);
-        resolve(result);
-      };
-
-      const onCancel = () => finish(null);
-      const onContinue = () => {
-        finish({
-          longitudeKey: lonSel.value,
-          latitudeKey: latSel.value,
-          hpdKey: hpdSel.value,
-          locationKey: locSel.value,
-          posteriorKey: postSel.value,
-        });
-      };
-
-      btnContinue.addEventListener('click', onContinue);
-      btnCancel?.addEventListener('click', onCancel);
-      btnClose?.addEventListener('click', onCancel);
-    });
-  }
-
-  // ── Commands ─────────────────────────────────────────────────────────
-  commands.get('import').exec = () => _openImportModal('auto');
-  commands.get('export').exec = () => exporter.open();
-
-  document.addEventListener('keydown', e => {
-    for (const [, cmd] of commands.getAll()) {
-      if (cmd.shortcut && commands.matchesShortcut(e, cmd.shortcut) && cmd.enabled) {
-        e.preventDefault(); cmd.exec?.(); return;
-      }
-    }
-
-    const keyIsZero = e.key === '0' || e.code === 'Digit0';
-    if ((e.metaKey || e.ctrlKey) && keyIsZero) {
-      e.preventDefault();
-      if (e.shiftKey) {
-        $('btn-reset-orientation')?.click();
-      } else {
-        $('btn-reset-zoom')?.click();
-      }
-      return;
-    }
-
-    if (e.key === 'Escape') {
-      if (treeMapOverlay?.classList.contains('open')) {
-        $('btn-tree-map-cancel')?.click();
-        return;
-      }
-      _projectionDragging = false;
-      _cmdZoomDragging = false;
-      _hideZoomBox();
-      _setAltZoomCursorState(false, false);
-      _spaceHeld = false;
-      renderer.setSpacePanActive(false);
-      _restoreStatusAfterSpaceHint();
-      _closeImportModal();
-      if (!layerPinned) _closePanel(layerPanel, 'layers-pinned');
-      if (!settingsPinned) _closePanel(settingsPanel, 'settings-pinned');
-    }
-  });
-
-  // Reset zoom button
-  $('btn-reset-zoom')?.addEventListener('click', () => {
-    renderer.resetZoom();
-  });
-  $('btn-zoom-back')?.addEventListener('click', () => {
-    if (_zoomHistoryIndex <= 0) return;
-    _applyHistoryTransform(_zoomHistoryIndex - 1);
-  });
-  $('btn-zoom-forward')?.addEventListener('click', () => {
-    if (_zoomHistoryIndex >= _zoomHistory.length - 1) return;
-    _applyHistoryTransform(_zoomHistoryIndex + 1);
-  });
-  $('btn-reset-orientation')?.addEventListener('click', async () => {
+  async function _resetOrientation() {
     const base = layers.find(l => l.type === LAYER_TYPES.BASEMAP);
     if (!base) return;
 
     base.style.center = [0, 0];
     base.style.rotate = [0, 0, 0];
 
-    if (_spaceHeld) _setSpaceHint();
+    if (mapInteractionController?.isSpaceHeld()) mapInteractionController.setSpaceHint();
     else $('status-stats').textContent = 'Map orientation reset';
 
     if (selectedId === base.id) _showSettingsForLayer(selectedId);
     await _render();
     _saveState();
-  });
+  }
 
-  // Layout mode toggle
-  $('btn-layout-mode')?.addEventListener('click', () => {
-    _layoutMode ? _exitLayoutMode() : _enterLayoutMode();
+  createAppCommandController({
+    documentRef: document,
+    commands,
+    openImportModal: _openImportModal,
+    openExport: () => exporter.open(),
+    onResetZoom: () => renderer.resetZoom(),
+    onResetOrientation: () => { _resetOrientation(); },
+    onZoomBack: () => {
+      if (!mapViewport.canGoBack()) return;
+      _applyHistoryTransform(mapViewport.currentIndex() - 1);
+    },
+    onZoomForward: () => {
+      if (!mapViewport.canGoForward()) return;
+      _applyHistoryTransform(mapViewport.currentIndex() + 1);
+    },
+    onToggleLayoutMode: () => layoutModeController.toggleLayoutMode(),
+    getTreeMapOverlay: () => treeMapOverlay,
+    cancelTreeMapping: () => $('btn-tree-map-cancel')?.click(),
+    getMapInteractionController: () => mapInteractionController,
+    closeImportModal: _closeImportModal,
+    closeUnpinnedPanels: () => panelController.closeUnpinnedPanels(),
+    resetZoomButton: $('btn-reset-zoom'),
+    zoomBackButton: $('btn-zoom-back'),
+    zoomForwardButton: $('btn-zoom-forward'),
+    resetOrientationButton: $('btn-reset-orientation'),
+    layoutModeButton: $('btn-layout-mode'),
   });
 
   // Show welcome overlay on first load (no saved state)
@@ -2279,17 +1121,21 @@ export async function app(opts = {}) {
   initToolbarHeight(root);
 
   // ── Initial render ───────────────────────────────────────────────────
-  await _loadDefaultOceansLayer();
-  await _loadDefaultCountriesLayer();
-  await _loadDefaultAdminDetailLayers();
+  await defaultGeojsonBootstrap.loadDefaultOceansLayer();
+  await defaultGeojsonBootstrap.loadDefaultCountriesLayer();
+  await defaultGeojsonBootstrap.loadDefaultAdminDetailLayers();
   _renderLayerList();
   _showSettingsForLayer(selectedId);
   await _render();
+  if (!_layoutMode) {
+    const t = renderer.getZoomTransform?.();
+    if (t) mapViewport.setViewConstraintBase(t, _viewportSize());
+  }
   _recordZoomTransform(renderer.getZoomTransform(), { immediate: true });
   _updateZoomNavButtons();
 
   // Open layer panel by default
-  _openPanel(layerPanel);
+  panelController.openLayer();
 }
 
 /* ── Helpers ───────────────────────────────────────────────────────── */
