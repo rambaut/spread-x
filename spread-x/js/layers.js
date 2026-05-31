@@ -5,6 +5,8 @@
  * All data is plain objects — no classes.
  */
 
+import { FRAME_PADDING_UI } from './config.js';
+
 /* ── Layer types ─────────────────────────────────────────────────────── */
 
 export const LAYER_TYPES = {
@@ -123,7 +125,11 @@ const DEFAULT_STYLES = {
     autoPerf:    true,
     minZoom:     2,
     maxVisible:  2000,
+    adaptiveSimplify: true,
     simplify:    0,
+    minSimplify: 0,
+    maxSimplify: 4,
+    detailZoom:  8,
   },
   points: {
     radius:      4,
@@ -145,7 +151,7 @@ const DEFAULT_STYLES = {
   },
   frame: {
     aspectPreset:  'slideWide',
-    margin:        24,
+    padding:       FRAME_PADDING_UI.defaultValue,
     showFill:      true,
     fill:          '#ffffff',
     fillOpacity:   1,

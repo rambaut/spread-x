@@ -226,7 +226,7 @@ export async function renderSvgGeographicBasemapLayer({
     }
   }
 
-  if (s.geographicShowCountries !== false) {
+  if (s.geographicShowCountries !== false && layer?.runtime?.showBasemapCountryPolygons === true) {
     await drawSvgGeographicCountries({
       g,
       style: s,
@@ -323,19 +323,31 @@ export function renderSvgGeoJsonLayer({
   intersectsViewportAfterTransform,
   geojsonRenderPolicy,
   getSimplifiedLayerData,
+  resolveGeojsonSimplifyLevel,
   prepareForSeamClipping,
   geojsonRenderStats,
 } = {}) {
   if (!g || !layer?.data || !path) return;
 
   const s = layer.style || {};
-  const simplifyLevel = Math.max(0, Math.min(5, Math.round(Number(s.simplify ?? 0))));
-  const simplified = getSimplifiedLayerData(layer, simplifyLevel);
+  const resolved = getSimplifiedLayerData(layer, 0);
+  if (!resolved) return;
+
+  const rawFeatures = resolved.type === 'FeatureCollection' ? resolved.features : [resolved];
+  const zoomT = currentTransform || d3.zoomIdentity;
+  const simplifyLevel = resolveGeojsonSimplifyLevel?.({
+    zoomScale: zoomT.k,
+    featureCount: rawFeatures.length,
+    style: s,
+  }) ?? Math.max(0, Math.min(5, Math.round(Number(s.simplify ?? 0))));
+
+  const simplified = simplifyLevel > 0
+    ? getSimplifiedLayerData(layer, simplifyLevel)
+    : resolved;
   if (!simplified) return;
 
   const prepared = prepareForSeamClipping(simplified);
   const allFeatures = prepared.type === 'FeatureCollection' ? prepared.features : [prepared];
-  const zoomT = currentTransform || d3.zoomIdentity;
   const policy = geojsonRenderPolicy(allFeatures.length, s);
 
   if (zoomT.k < policy.minZoom) {
@@ -344,6 +356,7 @@ export function renderSvgGeoJsonLayer({
       inViewFeatures: 0,
       renderedFeatures: 0,
       zoomScale: zoomT.k,
+      simplifyLevel,
       minZoom: policy.minZoom,
       maxVisibleFeatures: policy.maxVisibleFeatures,
       hiddenByZoom: true,
@@ -374,6 +387,7 @@ export function renderSvgGeoJsonLayer({
     inViewFeatures,
     renderedFeatures: features.length,
     zoomScale: zoomT.k,
+    simplifyLevel,
     minZoom: policy.minZoom,
     maxVisibleFeatures: policy.maxVisibleFeatures,
     hiddenByZoom: false,

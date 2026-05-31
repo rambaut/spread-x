@@ -94,7 +94,7 @@ export function createMapInteractionController({
     const t = renderer.getZoomTransform();
     const scaleX = viewportW / boxW;
     const scaleY = viewportH / boxH;
-    const nextK = Math.max(0.5, Math.min(30, t.k * Math.min(scaleX, scaleY)));
+    const nextK = Math.max(0.5, Math.min(200, t.k * Math.min(scaleX, scaleY)));
 
     const centerScreenX = (left + right) / 2;
     const centerScreenY = (top + bottom) / 2;

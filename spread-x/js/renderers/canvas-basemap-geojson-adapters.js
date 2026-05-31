@@ -247,7 +247,7 @@ export async function drawCanvasGeographicBasemapLayer({
     }
   }
 
-  if (style.geographicShowCountries !== false) {
+  if (style.geographicShowCountries !== false && layer?.runtime?.showBasemapCountryPolygons === true) {
     const scale = normalizeScale(style.geographicCountryScale || style.geographicVectorScale, '50m');
     const countriesTopo = await fetchOutline(`ne-countries-${scale}`);
     if (countriesTopo) {
@@ -305,14 +305,27 @@ export function drawCanvasGeoJsonLayer({
   intersectsViewportAfterTransform,
   geojsonRenderPolicy,
   getSimplifiedLayerData,
+  resolveGeojsonSimplifyLevel,
   prepareForSeamClipping,
   geojsonRenderStats,
 } = {}) {
   if (!ctx || !layer?.data || !projection) return;
 
   const s = layer.style || {};
-  const simplifyLevel = Math.max(0, Math.min(5, Math.round(Number(s.simplify ?? 0))));
-  const simplified = getSimplifiedLayerData(layer, simplifyLevel);
+  const resolved = getSimplifiedLayerData(layer, 0);
+  if (!resolved) return;
+
+  const rawFeatures = resolved.type === 'FeatureCollection' ? resolved.features : [resolved];
+  const zoomK = currentTransform?.k || 1;
+  const simplifyLevel = resolveGeojsonSimplifyLevel?.({
+    zoomScale: zoomK,
+    featureCount: rawFeatures.length,
+    style: s,
+  }) ?? Math.max(0, Math.min(5, Math.round(Number(s.simplify ?? 0))));
+
+  const simplified = simplifyLevel > 0
+    ? getSimplifiedLayerData(layer, simplifyLevel)
+    : resolved;
   if (!simplified) return;
   const prepared = prepareForSeamClipping(simplified);
   const allFeatures = prepared.type === 'FeatureCollection' ? prepared.features : [prepared];
@@ -323,7 +336,8 @@ export function drawCanvasGeoJsonLayer({
       totalFeatures: allFeatures.length,
       inViewFeatures: 0,
       renderedFeatures: 0,
-      zoomScale: currentTransform.k,
+      zoomScale: zoomK,
+      simplifyLevel,
       minZoom: policy.minZoom,
       maxVisibleFeatures: policy.maxVisibleFeatures,
       hiddenByZoom: true,
@@ -352,7 +366,8 @@ export function drawCanvasGeoJsonLayer({
     totalFeatures: allFeatures.length,
     inViewFeatures,
     renderedFeatures: features.length,
-    zoomScale: currentTransform.k,
+    zoomScale: zoomK,
+    simplifyLevel,
     minZoom: policy.minZoom,
     maxVisibleFeatures: policy.maxVisibleFeatures,
     hiddenByZoom: false,

@@ -9,9 +9,16 @@ export function createMapRendererCore({
   getLayers,
   onZoomChange,
   shouldForceCanvas,
+  getCanvasToSvgThreshold,
   canvasToSvgThreshold = CANVAS_TO_SVG_THRESHOLD,
 } = {}) {
   let _usingCanvas = true;
+
+  function _threshold() {
+    const dynamic = Number(getCanvasToSvgThreshold?.());
+    if (Number.isFinite(dynamic) && dynamic > 0) return dynamic;
+    return canvasToSvgThreshold;
+  }
 
   function _switchToCanvas(transform) {
     if (_usingCanvas) return;
@@ -36,7 +43,7 @@ export function createMapRendererCore({
     onZoomChange: transform => {
       onZoomChange?.(transform);
       if (shouldForceCanvas?.()) return;
-      if (transform.k >= canvasToSvgThreshold) _switchToSvg(transform);
+      if (transform.k >= _threshold()) _switchToSvg(transform);
     },
   });
 
@@ -50,9 +57,19 @@ export function createMapRendererCore({
         _switchToCanvas(transform);
         return;
       }
-      if (transform.k < canvasToSvgThreshold) _switchToCanvas(transform);
+      if (transform.k < _threshold()) _switchToCanvas(transform);
     },
   });
+
+  function _reconcileRendererMode() {
+    const transform = (_usingCanvas ? canvasRenderer : svgRenderer).getZoomTransform?.() || d3.zoomIdentity;
+    if (shouldForceCanvas?.()) {
+      _switchToCanvas(transform);
+      return;
+    }
+    if (transform.k >= _threshold()) _switchToSvg(transform);
+    else _switchToCanvas(transform);
+  }
 
   const api = {
     resize(w, h) {
@@ -64,6 +81,7 @@ export function createMapRendererCore({
       svgRenderer.setLayers(layers);
     },
     render() {
+      _reconcileRendererMode();
       const active = _usingCanvas ? canvasRenderer : svgRenderer;
       active.setLayers(getLayers?.() || []);
       return active.render();

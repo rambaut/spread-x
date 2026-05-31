@@ -116,7 +116,7 @@ export function createGeojsonFeatureInteractionController({
     const boxH = Math.max(1, maxY - minY);
     const innerW = Math.max(1, frame.width - (2 * padding));
     const innerH = Math.max(1, frame.height - (2 * padding));
-    const k = Math.max(0.5, Math.min(30, Math.min(innerW / boxW, innerH / boxH)));
+    const k = Math.max(0.5, Math.min(200, Math.min(innerW / boxW, innerH / boxH)));
 
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;

@@ -9,7 +9,11 @@ export function applyNamedGeojsonPerformanceProfile(layer, layerTypes) {
   if (n === 'oceanmask' || n === 'oceans') {
     layer.visible = true;
     layer.style.autoPerf = true;
-    layer.style.simplify = 3;
+    layer.style.adaptiveSimplify = true;
+    layer.style.simplify = 1;
+    layer.style.minSimplify = 1;
+    layer.style.maxSimplify = 5;
+    layer.style.detailZoom = 8;
     layer.style.oceanFill = layer.style.oceanFill || layer.style.fill || '#0a3340';
     layer.style.landFill = layer.style.landFill || '#1a3a2a';
     layer.style.landBoundaryStroke = layer.style.landBoundaryStroke || '#4a8a5a';
@@ -20,19 +24,31 @@ export function applyNamedGeojsonPerformanceProfile(layer, layerTypes) {
   if (n === 'admin0' || n === 'countries') {
     layer.visible = true;
     layer.style.autoPerf = true;
-    layer.style.simplify = 2;
+    layer.style.adaptiveSimplify = true;
+    layer.style.simplify = 0;
+    layer.style.minSimplify = 0;
+    layer.style.maxSimplify = 4;
+    layer.style.detailZoom = 8;
     return;
   }
 
   if (n === 'admin1') {
     layer.style.autoPerf = true;
-    layer.style.simplify = 2;
+    layer.style.adaptiveSimplify = true;
+    layer.style.simplify = 0;
+    layer.style.minSimplify = 0;
+    layer.style.maxSimplify = 4;
+    layer.style.detailZoom = 8;
     return;
   }
 
   if (n === 'admin2') {
     layer.style.autoPerf = true;
-    layer.style.simplify = 3;
+    layer.style.adaptiveSimplify = true;
+    layer.style.simplify = 1;
+    layer.style.minSimplify = 1;
+    layer.style.maxSimplify = 5;
+    layer.style.detailZoom = 8;
   }
 }
 

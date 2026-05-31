@@ -451,7 +451,8 @@ function _buildSettingsPanel() {
         <input type="range" id="set-fr-sw" class="form-range" min="0.2" max="2.5" step="0.05" value="1.5" />
       </div>
       <div class="sx-setting-row">
-        <small class="text-muted">A fixed inner margin is applied for now.</small>
+        <label for="set-fr-padding">Frame padding</label>
+        <input type="range" id="set-fr-padding" class="form-range" min="0" max="48" step="1" value="8" />
       </div>
     </div>
 
@@ -473,6 +474,44 @@ function _buildSettingsPanel() {
       <div class="sx-setting-row">
         <label for="set-gj-sw">Stroke width</label>
         <input type="range" id="set-gj-sw" class="form-range" min="0" max="2" step="0.05" value="1" />
+      </div>
+      <hr />
+      <h3><i class="bi bi-speedometer2"></i> Performance</h3>
+      <div class="sx-setting-row">
+        <label>
+          <input type="checkbox" id="set-gj-perf-auto" class="form-check-input" checked />
+          Auto-tune
+        </label>
+      </div>
+      <div class="sx-setting-row">
+        <label for="set-gj-min-zoom">Min zoom to render</label>
+        <input type="range" id="set-gj-min-zoom" class="form-range" min="1" max="12" step="0.25" value="2" />
+      </div>
+      <div class="sx-setting-row">
+        <label for="set-gj-max-visible">Max visible features</label>
+        <input type="range" id="set-gj-max-visible" class="form-range" min="100" max="20000" step="100" value="2000" />
+      </div>
+      <div class="sx-setting-row">
+        <label for="set-gj-simplify">Base simplify</label>
+        <input type="range" id="set-gj-simplify" class="form-range" min="0" max="5" step="1" value="0" />
+      </div>
+      <div class="sx-setting-row">
+        <label>
+          <input type="checkbox" id="set-gj-adaptive-simplify" class="form-check-input" checked />
+          Adaptive simplify
+        </label>
+      </div>
+      <div class="sx-setting-row">
+        <label for="set-gj-max-simplify">Max simplify</label>
+        <input type="range" id="set-gj-max-simplify" class="form-range" min="0" max="5" step="1" value="4" />
+      </div>
+      <div class="sx-setting-row">
+        <label for="set-gj-detail-zoom">Detail zoom target</label>
+        <input type="range" id="set-gj-detail-zoom" class="form-range" min="2" max="20" step="0.5" value="8" />
+      </div>
+      <div class="sx-setting-row">
+        <label for="set-render-svg-switch-zoom">Canvas → SVG zoom</label>
+        <input type="range" id="set-render-svg-switch-zoom" class="form-range" min="2" max="50" step="0.5" value="8" />
       </div>
     </div>
 

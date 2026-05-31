@@ -50,6 +50,30 @@ export function getSimplifiedLayerData(layer, simplifyLevel, {
   return cache.simplified;
 }
 
+export function resolveGeojsonSimplifyLevel({ zoomScale = 1, featureCount = 0, style = {} } = {}) {
+  const manualLevel = _clampSimplifyLevel(style.simplify ?? 0);
+  if (style.adaptiveSimplify === false) return manualLevel;
+
+  const minSimplify = _clampSimplifyLevel(style.minSimplify ?? manualLevel);
+  const autoMax = featureCount > 5000
+    ? 5
+    : featureCount > 1500
+      ? 4
+      : featureCount > 400
+        ? 3
+        : 2;
+  const maxSimplify = Math.max(minSimplify, _clampSimplifyLevel(style.maxSimplify ?? autoMax));
+  const detailZoom = Math.max(1.5, Number(style.detailZoom) || 8);
+
+  const z = Math.max(1, Number(zoomScale) || 1);
+  if (z >= detailZoom) return minSimplify;
+
+  const t = Math.max(0, Math.min(1, (z - 1) / (detailZoom - 1)));
+  // Reverse smoothstep: high simplification when zoomed out, easing into detail.
+  const eased = 1 - (t * t * (3 - (2 * t)));
+  return _clampSimplifyLevel(Math.round(minSimplify + ((maxSimplify - minSimplify) * eased)));
+}
+
 export function geojsonRenderPolicy(featureCount, style = {}) {
   const auto = style.autoPerf !== false;
   if (auto) return autoGeojsonRenderPolicy(featureCount);
@@ -131,4 +155,8 @@ export function decimateLine(coords, stride, closed) {
   }
 
   return out;
+}
+
+function _clampSimplifyLevel(value) {
+  return Math.max(0, Math.min(5, Math.round(Number(value) || 0)));
 }

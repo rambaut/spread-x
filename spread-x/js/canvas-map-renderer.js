@@ -22,6 +22,7 @@ import { pickTopoObjectKey } from './core/topology-utils.js';
 import {
   geojsonRenderPolicy as _geojsonRenderPolicyShared,
   getSimplifiedLayerData as _getSimplifiedLayerDataShared,
+  resolveGeojsonSimplifyLevel as _resolveGeojsonSimplifyLevelShared,
   resolveLayerGeoJSON as _resolveLayerGeoJSONShared,
 } from './core/geojson-layer-utils.js';
 import {
@@ -92,7 +93,7 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
       const modifierHeld = !!event.altKey;
       return (!modifierHeld || event.type === 'wheel') && !event.button;
     })
-    .scaleExtent([0.5, 30])
+    .scaleExtent([0.5, 200])
     .on('zoom', ({ transform }) => {
       _currentTransform = transform;
       _queueAnimFrame();
@@ -333,6 +334,7 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
       intersectsViewportAfterTransform: _intersectsViewportAfterTransform,
       geojsonRenderPolicy: _geojsonRenderPolicy,
       getSimplifiedLayerData: _getSimplifiedLayerData,
+      resolveGeojsonSimplifyLevel: _resolveGeojsonSimplifyLevel,
       prepareForSeamClipping: _prepareForSeamClipping,
       geojsonRenderStats: _geojsonRenderStats,
     });
@@ -436,6 +438,10 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
 
   function _geojsonRenderPolicy(featureCount, style = {}) {
     return _geojsonRenderPolicyShared(featureCount, style);
+  }
+
+  function _resolveGeojsonSimplifyLevel(args) {
+    return _resolveGeojsonSimplifyLevelShared(args);
   }
 
   function getZoomTransform() { return _currentTransform; }

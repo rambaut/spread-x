@@ -39,6 +39,8 @@ import { createGeojsonFeatureInteractionController } from './core/geojson-featur
 import { computeFrameRect } from './core/frame-geometry.js';
 import { pickTopoObjectKey } from './core/topology-utils.js';
 import { createLayerManager } from './core/layer-manager.js';
+import { FRAME_PADDING_UI } from './config.js';
+import { CANVAS_TO_SVG_THRESHOLD } from './canvas-map-renderer.js';
 
 // ── Command definitions ──────────────────────────────────────────────────
 
@@ -68,6 +70,7 @@ export async function app(opts = {}) {
   let selectedId = null;
   let settings = {};
   let _layoutMode = false;
+  let _canvasToSvgSwitchZoom = CANVAS_TO_SVG_THRESHOLD;
   let _naturalEarthRasterSets = ['NE1'];
   let _rasterSetsDiscovered = false;
   const countryInteractionState = createCountryInteractionState();
@@ -259,7 +262,9 @@ export async function app(opts = {}) {
     }
 
     const base = _activeBasemapLayer();
-    if (base?.runtime) {
+    if (base) {
+      base.runtime = base.runtime || {};
+      base.runtime.showBasemapCountryPolygons = _layoutMode;
       delete base.runtime.hoveredFeatureId;
       delete base.runtime.selectedFeatureIds;
     }
@@ -298,7 +303,20 @@ export async function app(opts = {}) {
       })),
       selectedId,
       layoutMode: _layoutMode,
+      render: {
+        canvasToSvgSwitchZoom: _canvasToSvgSwitchZoom,
+      },
     };
+  }
+
+  function _setCanvasToSvgSwitchZoom(value) {
+    const num = Number(value);
+    const clamped = Math.max(2, Math.min(50, Number.isFinite(num) ? num : CANVAS_TO_SVG_THRESHOLD));
+    _canvasToSvgSwitchZoom = clamped;
+  }
+
+  function _getCanvasToSvgSwitchZoom() {
+    return _canvasToSvgSwitchZoom;
   }
 
   // ── Core UI bindings ─────────────────────────────────────────────────
@@ -322,7 +340,7 @@ export async function app(opts = {}) {
     canvasElement: canvasEl,
     d3,
     topojson,
-    getLayers: () => layers,
+    getLayers: () => _layersForRender(),
     onZoomChange: transform => {
       const effective = _constrainViewModeTransform(transform);
       if (effective !== transform) {
@@ -334,6 +352,7 @@ export async function app(opts = {}) {
       _recordZoomTransform(effective);
     },
     shouldForceCanvas: () => _isGeographicRasterMode(),
+    getCanvasToSvgThreshold: () => _getCanvasToSvgSwitchZoom(),
   });
 
   const mapViewport = createMapViewport({
@@ -360,6 +379,11 @@ export async function app(opts = {}) {
     };
   }
 
+  function _frameRectForSize(size) {
+    const frameStyle = layers.find(l => l.type === LAYER_TYPES.FRAME)?.style;
+    return computeFrameRect(size.width, size.height, frameStyle);
+  }
+
   function _transformClose(a, b, epsilon = 1e-6) {
     if (!a || !b) return false;
     return (
@@ -373,6 +397,16 @@ export async function app(opts = {}) {
     if (_layoutMode || !mapViewport.hasViewConstraint()) return transform;
     const clamped = mapViewport.clampToViewConstraint(transform, _viewportSize());
     return _transformClose(clamped, transform) ? transform : clamped;
+  }
+
+  function _layersForRender() {
+    if (!_layoutMode) return layers;
+    const basemap = layers.find(layer => layer.type === LAYER_TYPES.BASEMAP);
+    const frame = layers.find(layer => layer.type === LAYER_TYPES.FRAME);
+    const layoutLayers = [];
+    if (basemap) layoutLayers.push(basemap);
+    if (frame) layoutLayers.push({ ...frame, visible: false });
+    return layoutLayers;
   }
 
   function _applyHistoryTransform(index) {
@@ -392,6 +426,67 @@ export async function app(opts = {}) {
     if (!wrapper) return;
     renderer.resize(wrapper.clientWidth, wrapper.clientHeight);
   }
+
+  let _lastViewportSize = _viewportSize();
+  let _resizePreserveScheduled = false;
+
+  function _scheduleResizePreserveViewport() {
+    if (_resizePreserveScheduled) return;
+    _resizePreserveScheduled = true;
+    requestAnimationFrame(async () => {
+      _resizePreserveScheduled = false;
+      await _handleResizePreserveViewport();
+    });
+  }
+
+  async function _handleResizePreserveViewport() {
+    const projectionBefore = renderer.getProjection?.();
+    const transformBefore = renderer.getZoomTransform?.() || d3.zoomIdentity;
+    const prevSize = _lastViewportSize;
+    const prevFrameRect = _frameRectForSize(prevSize);
+    const prevCenter = {
+      x: prevFrameRect.x + (prevFrameRect.width / 2),
+      y: prevFrameRect.y + (prevFrameRect.height / 2),
+    };
+
+    let anchorLonLat = null;
+    if (projectionBefore?.invert && Number.isFinite(transformBefore.k) && transformBefore.k > 0) {
+      const px = (prevCenter.x - transformBefore.x) / transformBefore.k;
+      const py = (prevCenter.y - transformBefore.y) / transformBefore.k;
+      anchorLonLat = projectionBefore.invert([px, py]);
+    }
+
+    await _render();
+
+    if (!anchorLonLat || !Array.isArray(anchorLonLat)) return;
+
+    const projectionAfter = renderer.getProjection?.();
+    const projectedAfter = projectionAfter?.(anchorLonLat);
+    if (!projectedAfter || !Number.isFinite(projectedAfter[0]) || !Number.isFinite(projectedAfter[1])) return;
+
+    const newSize = _viewportSize();
+    const newFrameRect = _frameRectForSize(newSize);
+    const newCenter = {
+      x: newFrameRect.x + (newFrameRect.width / 2),
+      y: newFrameRect.y + (newFrameRect.height / 2),
+    };
+
+    const k = transformBefore.k || 1;
+    const candidate = d3.zoomIdentity
+      .translate(newCenter.x - (projectedAfter[0] * k), newCenter.y - (projectedAfter[1] * k))
+      .scale(k);
+    const corrected = _constrainViewModeTransform(candidate);
+
+    mapViewport.withSuppressedHistory(() => {
+      renderer.syncZoomTransform(corrected);
+    });
+
+    if (!_layoutMode) {
+      mapViewport.setViewConstraintBase(corrected, newSize);
+    }
+    _updateSelectedGeoJSONStatus(corrected.k);
+  }
+
   let _renderQueued = false;
   function _queueRender() {
     if (_renderQueued) return;
@@ -401,13 +496,25 @@ export async function app(opts = {}) {
       _render();
     });
   }
-  window.addEventListener('resize', () => { _resize(); _render(); });
+  window.addEventListener('resize', () => {
+    _scheduleResizePreserveViewport();
+  });
+
+  const resizeObservedWrapper = $('canvas-wrapper');
+  if (resizeObservedWrapper && typeof ResizeObserver !== 'undefined') {
+    const wrapperResizeObserver = new ResizeObserver(() => {
+      _scheduleResizePreserveViewport();
+    });
+    wrapperResizeObserver.observe(resizeObservedWrapper);
+  }
 
   async function _render() {
     _resize();
     _syncBasemapCountryInteractionRuntime();
-    renderer.setLayers(layers);
+    renderer.setLayers(_layersForRender());
     await renderer.render();
+    _lastViewportSize = _viewportSize();
+    _syncLayerRenderModeIndicators();
     _updateSelectedGeoJSONStatus();
   }
 
@@ -424,6 +531,9 @@ export async function app(opts = {}) {
       if (existing) Object.assign(existing.style, sl.style);
     }
     if (saved.selectedId) selectedId = saved.selectedId;
+  }
+  if (saved?.render?.canvasToSvgSwitchZoom != null) {
+    _setCanvasToSvgSwitchZoom(saved.render.canvasToSvgSwitchZoom);
   }
   _ensureFixedBoundaryLayers();
 
@@ -449,10 +559,22 @@ export async function app(opts = {}) {
 
   _upgradeSettingsColourPickers();
   _installSliderReadouts();
+  _configureFramePaddingControl();
   _populateGeographicRasterSetOptions();
   _discoverNaturalEarthRasterSets().catch(err => {
     console.warn('Could not discover Natural Earth raster sets:', err);
   });
+
+  function _configureFramePaddingControl() {
+    const input = $('set-fr-padding');
+    if (!input) return;
+    input.min = String(FRAME_PADDING_UI.min);
+    input.max = String(FRAME_PADDING_UI.max);
+    input.step = String(FRAME_PADDING_UI.step);
+    if (!Number.isFinite(Number(input.value))) {
+      input.value = String(FRAME_PADDING_UI.defaultValue);
+    }
+  }
 
   function _upgradeSettingsColourPickers() {
     if (!settingsPanelBody) return;
@@ -488,8 +610,15 @@ export async function app(opts = {}) {
   function _renderLayerList() {
     if (!layerList) return;
     layerList.innerHTML = '';
-    // Render top-most first: higher stack index appears at top of the table.
-    for (const layer of [...layers].reverse()) {
+    const modeClass = renderer.isUsingCanvas() ? 'canvas' : 'svg';
+    const modeLabel = renderer.isUsingCanvas() ? 'Canvas' : 'SVG';
+    const reversed = [...layers].reverse();
+    const frameFromList = reversed.find(layer => layer.type === LAYER_TYPES.FRAME) || null;
+    const listLayers = reversed.filter(layer => layer.type !== LAYER_TYPES.FRAME);
+    if (frameFromList) listLayers.push(frameFromList);
+
+    // Render top-most first, but keep the frame row at the bottom.
+    for (const layer of listLayers) {
       const visLocked = layer.type === LAYER_TYPES.BASEMAP || layer.type === LAYER_TYPES.FRAME;
       const layoutLocked = _layoutMode && layer.type !== LAYER_TYPES.BASEMAP;
       const el = document.createElement('div');
@@ -502,10 +631,22 @@ export async function app(opts = {}) {
           <i class="bi ${layer.visible ? 'bi-eye' : 'bi-eye-slash'}"></i>
         </button>
         <i class="bi ${LAYER_ICONS[layer.type] || 'bi-square'} sx-layer-icon"></i>
+        <span class="sx-render-mode-indicator ${modeClass}" title="Rendered via ${modeLabel}" aria-label="Rendered via ${modeLabel}"></span>
         <span class="sx-layer-name">${_escapeHtml(layer.name)}</span>`;
       layerList.appendChild(el);
     }
     _updateLayerButtons();
+  }
+
+  function _syncLayerRenderModeIndicators() {
+    const modeClass = renderer.isUsingCanvas() ? 'canvas' : 'svg';
+    const modeLabel = renderer.isUsingCanvas() ? 'Canvas' : 'SVG';
+    layerList?.querySelectorAll('.sx-render-mode-indicator').forEach(indicator => {
+      indicator.classList.toggle('canvas', modeClass === 'canvas');
+      indicator.classList.toggle('svg', modeClass === 'svg');
+      indicator.title = `Rendered via ${modeLabel}`;
+      indicator.setAttribute('aria-label', `Rendered via ${modeLabel}`);
+    });
   }
 
   function _frameIndex() {
@@ -693,6 +834,7 @@ export async function app(opts = {}) {
       pointFields,
       normalizeScale: _normalizeScale,
       populateGeographicRasterSetOptions: _populateGeographicRasterSetOptions,
+      getCanvasToSvgThreshold: () => _getCanvasToSvgSwitchZoom(),
     });
     _syncBasemapLayoutLockUI(layer);
     if (layer.type === LAYER_TYPES.BASEMAP) _updateBasemapReadonlyPanel();
@@ -774,6 +916,7 @@ export async function app(opts = {}) {
         normalizeScale: _normalizeScale,
         isLayoutMode: _layoutMode,
         switchToCanvas: () => renderer.switchToCanvas?.(renderer.getZoomTransform?.()),
+        setCanvasToSvgThreshold: value => _setCanvasToSvgSwitchZoom(value),
       });
       _renderLayerList();
       _render();

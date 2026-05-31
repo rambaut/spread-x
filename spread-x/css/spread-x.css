@@ -13,7 +13,9 @@
   display: flex;
   flex-direction: column;
   transition: transform 0.22s cubic-bezier(.4,0,.2,1),
-              box-shadow 0.22s cubic-bezier(.4,0,.2,1);
+              box-shadow 0.22s cubic-bezier(.4,0,.2,1),
+              opacity 0.18s ease;
+  opacity: 0.96;
   overflow: hidden;
 }
 
@@ -25,6 +27,8 @@
   transform: translateX(-100%);
 }
 .sx-panel-left.open   { transform: translateX(0); box-shadow: 4px 0 24px var(--pt-shadow-popup); }
+.sx-panel-left.open,
+.sx-panel-left.pinned { opacity: 1; }
 .sx-panel-left.pinned { transform: translateX(0); box-shadow: none; }
 
 /* ── Right panel (settings) ────────────────────────────────────────── */
@@ -35,6 +39,8 @@
   transform: translateX(100%);
 }
 .sx-panel-right.open   { transform: translateX(0); box-shadow: -4px 0 24px var(--pt-shadow-popup); }
+.sx-panel-right.open,
+.sx-panel-right.pinned { opacity: 1; }
 .sx-panel-right.pinned { transform: translateX(0); box-shadow: none; }
 
 /* ── Body margin when panels are pinned ────────────────────────────── */
@@ -112,6 +118,23 @@
 .sx-layer-vis.off { opacity: 0.25; }
 
 .sx-layer-icon { font-size: 0.82rem; opacity: 0.5; flex-shrink: 0; }
+.sx-render-mode-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  opacity: 0.92;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.22);
+}
+
+.sx-render-mode-indicator.canvas {
+  background: #f2c14e;
+}
+
+.sx-render-mode-indicator.svg {
+  background: #5bc0eb;
+}
+
 .sx-layer-name {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--pt-text);
@@ -246,7 +269,6 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  transition: margin 0.22s cubic-bezier(.4,0,.2,1);
 }
 
 #canvas-wrapper {

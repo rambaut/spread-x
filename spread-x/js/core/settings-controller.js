@@ -1,3 +1,5 @@
+import { FRAME_PADDING_UI } from '../config.js';
+
 export function isOceansLayer(layer = {}) {
   if (!layer || layer.type !== 'geojson') return false;
   const name = String(layer.name || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
@@ -10,14 +12,28 @@ export function syncOceanLayerUI({ getEl, layer } = {}) {
   oceanSection.style.display = isOceansLayer(layer) ? '' : 'none';
 }
 
-export function syncGeoJSONPerfUI({ getEl } = {}) {
+export function syncGeoJSONPerfUI({ getEl, layer, autoGeojsonPerfPolicy } = {}) {
   const autoPerf = getEl?.('set-gj-perf-auto')?.checked !== false;
+  const adaptiveSimplify = getEl?.('set-gj-adaptive-simplify')?.checked !== false;
   const minZoom = getEl?.('set-gj-min-zoom');
   const maxVisible = getEl?.('set-gj-max-visible');
   const simplify = getEl?.('set-gj-simplify');
+  const maxSimplify = getEl?.('set-gj-max-simplify');
+  const detailZoom = getEl?.('set-gj-detail-zoom');
+
+  if (autoPerf && typeof autoGeojsonPerfPolicy === 'function' && layer) {
+    const policy = autoGeojsonPerfPolicy(layer);
+    if (policy) {
+      if (minZoom && Number.isFinite(+policy.minZoom)) minZoom.value = +policy.minZoom;
+      if (maxVisible && Number.isFinite(+policy.maxVisibleFeatures)) maxVisible.value = +policy.maxVisibleFeatures;
+    }
+  }
+
   if (minZoom) minZoom.disabled = autoPerf;
   if (maxVisible) maxVisible.disabled = autoPerf;
-  if (simplify) simplify.disabled = autoPerf;
+  if (simplify) simplify.disabled = false;
+  if (maxSimplify) maxSimplify.disabled = !adaptiveSimplify;
+  if (detailZoom) detailZoom.disabled = !adaptiveSimplify;
 }
 
 export function syncBasemapModeUI({ getEl } = {}) {
@@ -52,6 +68,8 @@ export function populateSettingsForLayer({
   pointFields,
   normalizeScale,
   populateGeographicRasterSetOptions,
+  getCanvasToSvgThreshold,
+  autoGeojsonPerfPolicy,
 } = {}) {
   if (!layer || !getEl) return;
 
@@ -94,9 +112,21 @@ export function populateSettingsForLayer({
       if (getEl('set-gj-perf-auto')) getEl('set-gj-perf-auto').checked = s.autoPerf !== false;
       if (getEl('set-gj-min-zoom')) getEl('set-gj-min-zoom').value = Number.isFinite(+s.minZoom) ? +s.minZoom : 2;
       if (getEl('set-gj-max-visible')) getEl('set-gj-max-visible').value = Number.isFinite(+s.maxVisible) ? +s.maxVisible : 2000;
-      if (getEl('set-gj-simplify')) getEl('set-gj-simplify').value = Number.isFinite(+s.simplify) ? +s.simplify : 0;
+      if (getEl('set-gj-simplify')) {
+        const baseSimplify = Number.isFinite(+s.simplify)
+          ? +s.simplify
+          : (Number.isFinite(+s.minSimplify) ? +s.minSimplify : 0);
+        getEl('set-gj-simplify').value = baseSimplify;
+      }
+      if (getEl('set-gj-adaptive-simplify')) getEl('set-gj-adaptive-simplify').checked = s.adaptiveSimplify !== false;
+      if (getEl('set-gj-max-simplify')) getEl('set-gj-max-simplify').value = Number.isFinite(+s.maxSimplify) ? +s.maxSimplify : 4;
+      if (getEl('set-gj-detail-zoom')) getEl('set-gj-detail-zoom').value = Number.isFinite(+s.detailZoom) ? +s.detailZoom : 8;
+      if (getEl('set-render-svg-switch-zoom')) {
+        const threshold = Number(getCanvasToSvgThreshold?.());
+        getEl('set-render-svg-switch-zoom').value = Number.isFinite(threshold) ? threshold : 8;
+      }
       syncOceanLayerUI({ getEl, layer });
-      syncGeoJSONPerfUI({ getEl });
+      syncGeoJSONPerfUI({ getEl, layer, autoGeojsonPerfPolicy });
       break;
     case layerTypes.FRAME:
       getEl('set-fr-aspect').value = s.aspectPreset;
@@ -105,6 +135,12 @@ export function populateSettingsForLayer({
       getEl('set-fr-fill-op').value = s.fillOpacity;
       getEl('set-fr-stroke').value = s.stroke;
       getEl('set-fr-sw').value = s.strokeWidth;
+      if (getEl('set-fr-padding')) {
+        const pad = Number(
+          s.padding ?? s.margin ?? FRAME_PADDING_UI.defaultValue
+        );
+        getEl('set-fr-padding').value = Math.max(FRAME_PADDING_UI.min, Math.min(FRAME_PADDING_UI.max, pad));
+      }
       break;
     case layerTypes.POINTS:
       getEl('set-pt-radius').value = s.radius;
@@ -147,6 +183,8 @@ export function readSettingsFromLayerUI({
   normalizeScale,
   isLayoutMode,
   switchToCanvas,
+  setCanvasToSvgThreshold,
+  autoGeojsonPerfPolicy,
 } = {}) {
   if (!layer || !getEl) return;
 
@@ -205,6 +243,13 @@ export function readSettingsFromLayerUI({
       if (getEl('set-gj-min-zoom')) s.minZoom = +getEl('set-gj-min-zoom')?.value;
       if (getEl('set-gj-max-visible')) s.maxVisible = +getEl('set-gj-max-visible')?.value;
       if (getEl('set-gj-simplify')) s.simplify = +getEl('set-gj-simplify')?.value;
+      if (getEl('set-gj-adaptive-simplify')) s.adaptiveSimplify = getEl('set-gj-adaptive-simplify')?.checked;
+      if (getEl('set-gj-max-simplify')) s.maxSimplify = +getEl('set-gj-max-simplify')?.value;
+      if (getEl('set-gj-detail-zoom')) s.detailZoom = +getEl('set-gj-detail-zoom')?.value;
+      s.minSimplify = Number.isFinite(+s.simplify) ? +s.simplify : 0;
+      if (getEl('set-render-svg-switch-zoom')) {
+        setCanvasToSvgThreshold?.(+getEl('set-render-svg-switch-zoom')?.value);
+      }
       if (isOceansLayer(layer)) {
         if (getEl('set-oc-ocean')) s.oceanFill = getEl('set-oc-ocean')?.value;
         if (s.oceanFill) s.fill = s.oceanFill;
@@ -212,7 +257,7 @@ export function readSettingsFromLayerUI({
         if (getEl('set-oc-boundary')) s.landBoundaryStroke = getEl('set-oc-boundary')?.value;
         if (getEl('set-oc-boundary-sw')) s.landBoundaryWidth = +getEl('set-oc-boundary-sw')?.value;
       }
-      syncGeoJSONPerfUI({ getEl });
+      syncGeoJSONPerfUI({ getEl, layer, autoGeojsonPerfPolicy });
       break;
     case layerTypes.FRAME:
       s.aspectPreset = getEl('set-fr-aspect')?.value;
@@ -221,6 +266,10 @@ export function readSettingsFromLayerUI({
       s.fillOpacity = +getEl('set-fr-fill-op')?.value;
       s.stroke = getEl('set-fr-stroke')?.value;
       s.strokeWidth = +getEl('set-fr-sw')?.value;
+      if (getEl('set-fr-padding')) {
+        const pad = Number(getEl('set-fr-padding')?.value);
+        s.padding = Math.max(FRAME_PADDING_UI.min, Math.min(FRAME_PADDING_UI.max, Number.isFinite(pad) ? pad : FRAME_PADDING_UI.defaultValue));
+      }
       break;
     case layerTypes.POINTS:
       s.radius = +getEl('set-pt-radius')?.value;

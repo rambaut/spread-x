@@ -12,6 +12,7 @@ import {
   countGeoJSONFeatures as _countGeoJSONFeaturesShared,
   geojsonRenderPolicy as _geojsonRenderPolicyShared,
   getSimplifiedLayerData as _getSimplifiedLayerDataShared,
+  resolveGeojsonSimplifyLevel as _resolveGeojsonSimplifyLevelShared,
   resolveLayerGeoJSON as _resolveLayerGeoJSONShared,
 } from './core/geojson-layer-utils.js';
 import {
@@ -91,7 +92,7 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
       const modifierHeld = !!event.altKey;
       return (!modifierHeld || event.type === 'wheel') && !event.button;
     })
-    .scaleExtent([0.5, 30])
+    .scaleExtent([0.5, 200])
     .on('zoom', ({ transform }) => {
       _currentTransform = transform;
       gMap.attr('transform', transform);
@@ -344,6 +345,7 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
       intersectsViewportAfterTransform: _intersectsViewportAfterTransform,
       geojsonRenderPolicy: _geojsonRenderPolicy,
       getSimplifiedLayerData: _getSimplifiedLayerData,
+      resolveGeojsonSimplifyLevel: _resolveGeojsonSimplifyLevel,
       prepareForSeamClipping: _prepareForSeamClipping,
       geojsonRenderStats: _geojsonRenderStats,
     });
@@ -421,6 +423,10 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
 
   function _geojsonRenderPolicy(featureCount, style = {}) {
     return _geojsonRenderPolicyShared(featureCount, style);
+  }
+
+  function _resolveGeojsonSimplifyLevel(args) {
+    return _resolveGeojsonSimplifyLevelShared(args);
   }
 
   function _hasLargeGeoJSONLayer() {
