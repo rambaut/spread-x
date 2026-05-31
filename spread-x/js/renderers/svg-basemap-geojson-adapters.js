@@ -694,21 +694,24 @@ export function renderSvgGeoJsonLayer({
     featureCount: rawFeatures.length,
     style: s,
   }) ?? Math.max(0, Math.min(12, Math.round(Number(s.simplify ?? 0))));
+  const adaptiveEnabled = s.adaptiveSimplify !== false;
   let effectiveSimplifyLevel = simplifyLevel;
-  if (isBoundaryLayer && zoomT.k >= 20) {
-    effectiveSimplifyLevel = Math.max(effectiveSimplifyLevel, 5);
-  }
-  if (isBoundaryLayer && zoomT.k >= 35) {
-    effectiveSimplifyLevel = Math.max(effectiveSimplifyLevel, 7);
-  }
-  if (isOceansLayer && zoomT.k >= 8) {
-    effectiveSimplifyLevel = Math.max(effectiveSimplifyLevel, 8);
-  }
-  if (isOceansLayer && zoomT.k >= 20) {
-    effectiveSimplifyLevel = Math.max(effectiveSimplifyLevel, 10);
-  }
-  if (isOceansLayer && zoomT.k >= 30) {
-    effectiveSimplifyLevel = Math.max(effectiveSimplifyLevel, 12);
+  if (!adaptiveEnabled) {
+    if (isBoundaryLayer && zoomT.k >= 20) {
+      effectiveSimplifyLevel = Math.max(effectiveSimplifyLevel, 5);
+    }
+    if (isBoundaryLayer && zoomT.k >= 35) {
+      effectiveSimplifyLevel = Math.max(effectiveSimplifyLevel, 7);
+    }
+    if (isOceansLayer && zoomT.k >= 8) {
+      effectiveSimplifyLevel = Math.max(effectiveSimplifyLevel, 8);
+    }
+    if (isOceansLayer && zoomT.k >= 20) {
+      effectiveSimplifyLevel = Math.max(effectiveSimplifyLevel, 10);
+    }
+    if (isOceansLayer && zoomT.k >= 30) {
+      effectiveSimplifyLevel = Math.max(effectiveSimplifyLevel, 12);
+    }
   }
 
   const prepared = getPreparedLayerData

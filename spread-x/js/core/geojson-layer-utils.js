@@ -1,3 +1,5 @@
+import { GEOJSON_LIMITS } from '../config.js';
+
 export function countGeoJSONFeatures(data) {
   if (!data) return 0;
   if (data.type === 'FeatureCollection') return data.features?.length || 0;
@@ -46,7 +48,10 @@ export function getSimplifiedLayerData(layer, simplifyLevel, {
     layerCache?.set(layer, cache);
   }
 
-  const level = Math.max(0, Math.min(12, Math.round(Number(simplifyLevel) || 0)));
+  const level = Math.max(
+    GEOJSON_LIMITS.simplifyLevel.min,
+    Math.min(GEOJSON_LIMITS.simplifyLevel.max, Math.round(Number(simplifyLevel) || 0))
+  );
   if (!cache.byLevel.has(level)) {
     cache.byLevel.set(level, simplifyGeoJSON(resolved, level));
   }
@@ -67,27 +72,40 @@ export function resolveGeojsonSimplifyLevel({ zoomScale = 1, featureCount = 0, s
         ? 3
         : 2;
   const maxSimplify = Math.max(minSimplify, _clampSimplifyLevel(style.maxSimplify ?? autoMax));
-  const detailZoom = Math.max(1.5, Number(style.detailZoom) || 8);
+  const detailZoom = Math.max(
+    GEOJSON_LIMITS.targetZoom.min,
+    Number(style.detailZoom) || GEOJSON_LIMITS.targetZoom.defaultValue
+  );
 
   const z = Math.max(1, Number(zoomScale) || 1);
-  // Dense datasets can remain prohibitively expensive at high zoom even when
-  // only a subset is visible. Apply a gentle floor to preserve interactivity.
-  let highZoomFloor = minSimplify;
-  if (featureCount >= 200 && z >= 20) highZoomFloor = Math.max(highZoomFloor, 2);
-  if (featureCount >= 200 && z >= 30) highZoomFloor = Math.max(highZoomFloor, 3);
+  // At and beyond target zoom, cap at the highest detail (lowest simplify).
+  if (z >= detailZoom) return minSimplify;
 
-  if (z >= detailZoom) return highZoomFloor;
-
-  const t = Math.max(0, Math.min(1, (z - 1) / (detailZoom - 1)));
-  // Reverse smoothstep: high simplification when zoomed out, easing into detail.
+  const zCurve = Math.log2(Math.max(1, z));
+  const targetCurve = Math.log2(Math.max(1.000001, detailZoom));
+  const t = Math.max(0, Math.min(1, zCurve / targetCurve));
+  // Reverse smoothstep over a log2 zoom curve: each zoom doubling advances
+  // simplification by a similar visual amount.
   const eased = 1 - (t * t * (3 - (2 * t)));
   const adaptive = _clampSimplifyLevel(Math.round(minSimplify + ((maxSimplify - minSimplify) * eased)));
-  return Math.max(highZoomFloor, adaptive);
+  return adaptive;
 }
 
 export function geojsonRenderPolicy(featureCount, style = {}) {
-  const minZoom = Math.max(1, Math.min(12, Number(style.minZoom) || 1));
-  const maxVisibleFeatures = Math.max(100, Math.min(20000, Math.round(Number(style.maxVisible) || 2000)));
+  const minZoom = Math.max(
+    GEOJSON_LIMITS.renderPolicy.minZoomMin,
+    Math.min(
+      GEOJSON_LIMITS.renderPolicy.minZoomMax,
+      Number(style.minZoom) || GEOJSON_LIMITS.renderPolicy.minZoomMin
+    )
+  );
+  const maxVisibleFeatures = Math.max(
+    GEOJSON_LIMITS.renderPolicy.maxVisibleMin,
+    Math.min(
+      GEOJSON_LIMITS.renderPolicy.maxVisibleMax,
+      Math.round(Number(style.maxVisible) || GEOJSON_LIMITS.renderPolicy.maxVisibleDefault)
+    )
+  );
   return { minZoom, maxVisibleFeatures };
 }
 
@@ -167,5 +185,8 @@ export function decimateLine(coords, stride, closed) {
 }
 
 function _clampSimplifyLevel(value) {
-  return Math.max(0, Math.min(12, Math.round(Number(value) || 0)));
+  return Math.max(
+    GEOJSON_LIMITS.simplifyLevel.min,
+    Math.min(GEOJSON_LIMITS.simplifyLevel.max, Math.round(Number(value) || 0))
+  );
 }

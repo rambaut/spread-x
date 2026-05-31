@@ -1,3 +1,5 @@
+import { GEOJSON_LIMITS } from '../config.js';
+
 export function normalizedLayerName(layer) {
   return (layer?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
@@ -10,10 +12,10 @@ export function applyNamedGeojsonPerformanceProfile(layer, layerTypes) {
     layer.visible = true;
     layer.style.autoPerf = false;
     layer.style.adaptiveSimplify = true;
-    layer.style.simplify = 1;
-    layer.style.minSimplify = 1;
+    layer.style.simplify = 0;
+    layer.style.minSimplify = 0;
     layer.style.maxSimplify = 5;
-    layer.style.detailZoom = 8;
+    layer.style.detailZoom = GEOJSON_LIMITS.targetZoom.defaultValue;
     layer.style.oceanFill = layer.style.oceanFill || layer.style.fill || '#0a3340';
     layer.style.landFill = layer.style.landFill || '#1a3a2a';
     layer.style.landBoundaryStroke = layer.style.landBoundaryStroke || '#4a8a5a';
@@ -25,30 +27,30 @@ export function applyNamedGeojsonPerformanceProfile(layer, layerTypes) {
     layer.visible = true;
     layer.style.autoPerf = false;
     layer.style.adaptiveSimplify = true;
-    layer.style.simplify = 1;
-    layer.style.minSimplify = 1;
+    layer.style.simplify = 0;
+    layer.style.minSimplify = 0;
     layer.style.maxSimplify = 4;
-    layer.style.detailZoom = 8;
+    layer.style.detailZoom = GEOJSON_LIMITS.targetZoom.defaultValue;
     return;
   }
 
   if (n === 'admin1') {
     layer.style.autoPerf = false;
     layer.style.adaptiveSimplify = true;
-    layer.style.simplify = 1;
-    layer.style.minSimplify = 1;
+    layer.style.simplify = 0;
+    layer.style.minSimplify = 0;
     layer.style.maxSimplify = 4;
-    layer.style.detailZoom = 8;
+    layer.style.detailZoom = GEOJSON_LIMITS.targetZoom.defaultValue;
     return;
   }
 
   if (n === 'admin2') {
     layer.style.autoPerf = false;
     layer.style.adaptiveSimplify = true;
-    layer.style.simplify = 1;
-    layer.style.minSimplify = 1;
+    layer.style.simplify = 0;
+    layer.style.minSimplify = 0;
     layer.style.maxSimplify = 5;
-    layer.style.detailZoom = 8;
+    layer.style.detailZoom = GEOJSON_LIMITS.targetZoom.defaultValue;
   }
 }
 

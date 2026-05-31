@@ -91,7 +91,7 @@ export function createBasemapStatusController({
     if (detailEl) detailEl.textContent = currentBasemapDetailLabel(k);
   }
 
-  function appendRasterTierStatus(baseText, zoomK, asHtml = false) {
+  function appendRasterTierStatus(baseText, zoomK, asHtml = false, detailPercent = null) {
     const prefix = baseText ? `${baseText} | ` : '';
     if (!isGeographicRasterMode?.()) return baseText || '';
 
@@ -102,15 +102,20 @@ export function createBasemapStatusController({
     const forcedTier = String(bm.geographicRasterForceTier || 'auto').toLowerCase();
     const tier = forcedTier === 'hr' ? 'HR' : forcedTier === '50m' ? '50M' : (k >= threshold ? 'HR' : '50M');
     const forceNote = forcedTier === 'auto' ? '' : ' forced';
+    const detail = Number.isFinite(+detailPercent)
+      ? `${Math.max(1, Math.min(100, Math.round(+detailPercent)))}%`
+      : null;
+    const detailSuffix = detail ? ` / detail ${detail}` : '';
 
     if (!asHtml) {
-      const text = `Raster ${setName}: ${tier}${forceNote} (zoom ${k.toFixed(2)} / switch ${threshold.toFixed(2)})`;
+      const text = `Raster ${setName}: ${tier}${forceNote} (zoom ${k.toFixed(2)}${detailSuffix})`;
       return `${prefix}${text}`;
     }
 
     const tierClass = tier === 'HR' ? 'sx-raster-tier--hr' : 'sx-raster-tier--50m';
     const forcedClass = forcedTier === 'auto' ? '' : ' sx-raster-tier--forced';
-    const text = `Raster ${setName}: <button type="button" class="sx-raster-tier ${tierClass}${forcedClass}" data-raster-tier-toggle="1" title="Click to force alternate raster tier (Shift-click for auto)">${tier}</button> <span class="sx-raster-zoom">${forceNote}(zoom ${k.toFixed(2)} / switch ${threshold.toFixed(2)})</span>`;
+    const switchHint = Number.isFinite(threshold) ? ` (auto switch ${threshold.toFixed(2)})` : '';
+    const text = `Raster ${setName}: <button type="button" class="sx-raster-tier ${tierClass}${forcedClass}" data-raster-tier-toggle="1" title="Click to force alternate raster tier (Shift-click for auto)">${tier}</button> <span class="sx-raster-zoom">${forceNote}(zoom ${k.toFixed(2)}${detailSuffix})${switchHint}</span>`;
     return `${prefix}${text}`;
   }
 

@@ -6,6 +6,7 @@
  */
 
 import { LAYER_TYPES, MAP_OUTLINES } from './layers.js';
+import { RENDER_ZOOM_LIMITS } from './config.js';
 import { computeFrameRect } from './core/frame-geometry.js';
 import { pickTopoObjectKey } from './core/topology-utils.js';
 import {
@@ -96,7 +97,7 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
       const modifierHeld = !!event.altKey;
       return (!modifierHeld || event.type === 'wheel') && !event.button;
     })
-    .scaleExtent([0.5, 200])
+      .scaleExtent([RENDER_ZOOM_LIMITS.min, RENDER_ZOOM_LIMITS.max])
     .on('zoom', ({ transform }) => {
       _currentTransform = transform;
       gMap.attr('transform', transform);

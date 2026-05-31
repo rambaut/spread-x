@@ -5,7 +5,7 @@
  * All data is plain objects — no classes.
  */
 
-import { FRAME_PADDING_UI } from './config.js';
+import { FRAME_PADDING_UI, GEOJSON_LIMITS } from './config.js';
 
 /* ── Layer types ─────────────────────────────────────────────────────── */
 
@@ -123,13 +123,13 @@ const DEFAULT_STYLES = {
     featureSelectStroke: 'none',
     featureSelectStrokeWidth: 1,
     autoPerf:    false,
-    minZoom:     2,
-    maxVisible:  2000,
+    minZoom:     GEOJSON_LIMITS.renderPolicy.minZoomDefault,
+    maxVisible:  GEOJSON_LIMITS.renderPolicy.maxVisibleDefault,
     adaptiveSimplify: true,
-    simplify:    1,
-    minSimplify: 1,
+    simplify:    GEOJSON_LIMITS.simplifyLevel.defaultValue,
+    minSimplify: GEOJSON_LIMITS.simplifyLevel.defaultValue,
     maxSimplify: 4,
-    detailZoom:  8,
+    detailZoom:  GEOJSON_LIMITS.targetZoom.defaultValue,
     debugPerfStatus: false,
   },
   points: {

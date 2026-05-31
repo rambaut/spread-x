@@ -17,6 +17,7 @@
  */
 
 import { LAYER_TYPES, MAP_OUTLINES } from './layers.js';
+import { RENDERER_MODE_LIMITS, RENDER_ZOOM_LIMITS } from './config.js';
 import { computeFrameRect } from './core/frame-geometry.js';
 import { pickTopoObjectKey } from './core/topology-utils.js';
 import {
@@ -46,7 +47,7 @@ import { drawCanvasBasemapLayer, drawCanvasGeoJsonLayer } from './renderers/canv
 import { drawCanvasPointsLayer, drawCanvasTreeLayer } from './renderers/canvas-layer-adapters.js';
 
 /** Zoom scale at which to hand off rendering to the SVG renderer. */
-export const CANVAS_TO_SVG_THRESHOLD = 8;
+export const CANVAS_TO_SVG_THRESHOLD = RENDERER_MODE_LIMITS.canvasToSvgSwitchDefault;
 
 /* ── Renderer ─────────────────────────────────────────────────────── */
 
@@ -94,7 +95,7 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
       const modifierHeld = !!event.altKey;
       return (!modifierHeld || event.type === 'wheel') && !event.button;
     })
-    .scaleExtent([0.5, 200])
+      .scaleExtent([RENDER_ZOOM_LIMITS.min, RENDER_ZOOM_LIMITS.max])
     .on('zoom', ({ transform }) => {
       _currentTransform = transform;
       _queueAnimFrame();

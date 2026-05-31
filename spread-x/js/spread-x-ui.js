@@ -299,7 +299,7 @@ function _buildSettingsPanel() {
       </div>
       <div class="sx-setting-row">
         <label for="set-bm-proj-boundary-sw">Projection boundary width</label>
-        <input type="range" id="set-bm-proj-boundary-sw" class="form-range" min="0" max="1.5" step="0.05" value="1" />
+        <input type="range" id="set-bm-proj-boundary-sw" class="form-range" min="0" max="5" step="0.05" value="1" />
       </div>
       <hr />
       <h3><i class="bi bi-globe-americas"></i> Globe</h3>
@@ -335,7 +335,7 @@ function _buildSettingsPanel() {
       </div>
       <div class="sx-setting-row">
         <label for="set-bm-globe-outline-sw">Outline width</label>
-        <input type="range" id="set-bm-globe-outline-sw" class="form-range" min="0" max="1.5" step="0.05" value="0.5" />
+        <input type="range" id="set-bm-globe-outline-sw" class="form-range" min="0" max="5" step="0.05" value="0.5" />
       </div>
       </div>
 
@@ -406,7 +406,7 @@ function _buildSettingsPanel() {
         </div>
         <div class="sx-setting-row">
           <label for="set-bm-geographic-country-width">Country stroke width</label>
-          <input type="range" id="set-bm-geographic-country-width" class="form-range" min="0" max="2" step="0.05" value="0.45" />
+          <input type="range" id="set-bm-geographic-country-width" class="form-range" min="0" max="5" step="0.05" value="0.45" />
         </div>
         <div class="sx-setting-row">
           <label for="set-bm-geographic-country-opacity">Country opacity</label>
@@ -448,7 +448,7 @@ function _buildSettingsPanel() {
       </div>
       <div class="sx-setting-row">
         <label for="set-fr-sw">Boundary width</label>
-        <input type="range" id="set-fr-sw" class="form-range" min="0.2" max="2.5" step="0.05" value="1.5" />
+        <input type="range" id="set-fr-sw" class="form-range" min="0.2" max="5" step="0.05" value="1.5" />
       </div>
       <div class="sx-setting-row">
         <label for="set-fr-padding">Frame padding</label>
@@ -473,7 +473,7 @@ function _buildSettingsPanel() {
       </div>
       <div class="sx-setting-row">
         <label for="set-gj-sw">Stroke width</label>
-        <input type="range" id="set-gj-sw" class="form-range" min="0" max="2" step="0.05" value="1" />
+        <input type="range" id="set-gj-sw" class="form-range" min="0" max="5" step="0.05" value="1" />
       </div>
       <hr />
       <h3><i class="bi bi-speedometer2"></i> Performance</h3>
@@ -486,22 +486,18 @@ function _buildSettingsPanel() {
         <input type="range" id="set-gj-max-visible" class="form-range" min="100" max="20000" step="100" value="2000" />
       </div>
       <div class="sx-setting-row">
-        <label for="set-gj-simplify">Base simplify</label>
-        <input type="range" id="set-gj-simplify" class="form-range" min="0" max="5" step="1" value="0" />
+        <label for="set-gj-simplify">Detail</label>
+        <input type="range" id="set-gj-simplify" class="form-range" min="1" max="100" step="1" value="67" />
       </div>
       <div class="sx-setting-row">
         <label>
           <input type="checkbox" id="set-gj-adaptive-simplify" class="form-check-input" checked />
-          Adaptive simplify
+          Adaptive
         </label>
       </div>
       <div class="sx-setting-row">
-        <label for="set-gj-max-simplify">Max simplify</label>
-        <input type="range" id="set-gj-max-simplify" class="form-range" min="0" max="5" step="1" value="4" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-gj-detail-zoom">Detail zoom target</label>
-        <input type="range" id="set-gj-detail-zoom" class="form-range" min="2" max="20" step="0.5" value="8" />
+        <label for="set-gj-detail-zoom">Target zoom</label>
+        <input type="range" id="set-gj-detail-zoom" class="form-range" min="2" max="1024" step="1" value="256" />
       </div>
       <div class="sx-setting-row">
         <label>
@@ -535,7 +531,7 @@ function _buildSettingsPanel() {
       </div>
       <div class="sx-setting-row">
         <label for="set-pt-sw">Stroke width</label>
-        <input type="range" id="set-pt-sw" class="form-range" min="0" max="2" step="0.05" value="1" />
+        <input type="range" id="set-pt-sw" class="form-range" min="0" max="5" step="0.05" value="1" />
       </div>
       <div class="sx-setting-row">
         <label for="set-pt-label">Label field</label>
@@ -565,7 +561,7 @@ function _buildSettingsPanel() {
       </div>
       <div class="sx-setting-row">
         <label for="set-tr-width">Branch width</label>
-        <input type="range" id="set-tr-width" class="form-range" min="0.2" max="2.5" step="0.05" value="1.5" />
+        <input type="range" id="set-tr-width" class="form-range" min="0.2" max="5" step="0.05" value="1.5" />
       </div>
       <div class="sx-setting-row">
         <label for="set-tr-op">Branch opacity</label>

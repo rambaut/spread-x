@@ -39,7 +39,7 @@ import { createGeojsonFeatureInteractionController } from './core/geojson-featur
 import { computeFrameRect } from './core/frame-geometry.js';
 import { pickTopoObjectKey } from './core/topology-utils.js';
 import { createLayerManager } from './core/layer-manager.js';
-import { FRAME_PADDING_UI } from './config.js';
+import { FRAME_PADDING_UI, GEOJSON_LIMITS, RENDERER_MODE_LIMITS } from './config.js';
 import { CANVAS_TO_SVG_THRESHOLD } from './canvas-map-renderer.js';
 import {
   autoGeojsonRenderPolicy,
@@ -343,7 +343,13 @@ export async function app(opts = {}) {
 
   function _setCanvasToSvgSwitchZoom(value) {
     const num = Number(value);
-    const clamped = Math.max(2, Math.min(50, Number.isFinite(num) ? num : CANVAS_TO_SVG_THRESHOLD));
+    const clamped = Math.max(
+      RENDERER_MODE_LIMITS.canvasToSvgSwitchMin,
+      Math.min(
+        RENDERER_MODE_LIMITS.canvasToSvgSwitchMax,
+        Number.isFinite(num) ? num : CANVAS_TO_SVG_THRESHOLD
+      )
+    );
     _canvasToSvgSwitchZoom = clamped;
   }
 
@@ -359,6 +365,13 @@ export async function app(opts = {}) {
     });
     const featureCount = countGeoJSONFeatures(resolved);
     return autoGeojsonRenderPolicy(featureCount);
+  }
+
+  function _currentGeojsonSimplifyLevel(layer) {
+    if (!layer || layer.type !== LAYER_TYPES.GEOJSON) return null;
+    const stats = renderer.getGeoJSONRenderStats(layer.id);
+    const simplifyLevel = Number(stats?.simplifyLevel);
+    return Number.isFinite(simplifyLevel) ? simplifyLevel : null;
   }
 
   // ── Core UI bindings ─────────────────────────────────────────────────
@@ -648,6 +661,7 @@ export async function app(opts = {}) {
   _upgradeSettingsColourPickers();
   _installSliderReadouts();
   _configureFramePaddingControl();
+  _configureGeojsonPerformanceControls();
   _populateGeographicRasterSetOptions();
   _discoverNaturalEarthRasterSets().catch(err => {
     console.warn('Could not discover Natural Earth raster sets:', err);
@@ -661,6 +675,36 @@ export async function app(opts = {}) {
     input.step = String(FRAME_PADDING_UI.step);
     if (!Number.isFinite(Number(input.value))) {
       input.value = String(FRAME_PADDING_UI.defaultValue);
+    }
+  }
+
+  function _configureGeojsonPerformanceControls() {
+    const minZoom = $('set-gj-min-zoom');
+    if (minZoom) {
+      minZoom.min = String(GEOJSON_LIMITS.renderPolicy.minZoomMin);
+      minZoom.max = String(GEOJSON_LIMITS.renderPolicy.minZoomMax);
+      if (!Number.isFinite(Number(minZoom.value))) minZoom.value = String(GEOJSON_LIMITS.renderPolicy.minZoomDefault);
+    }
+
+    const maxVisible = $('set-gj-max-visible');
+    if (maxVisible) {
+      maxVisible.min = String(GEOJSON_LIMITS.renderPolicy.maxVisibleMin);
+      maxVisible.max = String(GEOJSON_LIMITS.renderPolicy.maxVisibleMax);
+      if (!Number.isFinite(Number(maxVisible.value))) maxVisible.value = String(GEOJSON_LIMITS.renderPolicy.maxVisibleDefault);
+    }
+
+    const detail = $('set-gj-simplify');
+    if (detail) {
+      detail.min = String(GEOJSON_LIMITS.detailPercent.min);
+      detail.max = String(GEOJSON_LIMITS.detailPercent.max);
+      if (!Number.isFinite(Number(detail.value))) detail.value = String(GEOJSON_LIMITS.detailPercent.defaultValue);
+    }
+
+    const targetZoom = $('set-gj-detail-zoom');
+    if (targetZoom) {
+      targetZoom.min = String(GEOJSON_LIMITS.targetZoom.min);
+      targetZoom.max = String(GEOJSON_LIMITS.targetZoom.max);
+      if (!Number.isFinite(Number(targetZoom.value))) targetZoom.value = String(GEOJSON_LIMITS.targetZoom.defaultValue);
     }
   }
 
@@ -871,6 +915,44 @@ export async function app(opts = {}) {
     basemapStatusController.updateBasemapReadonlyPanel(zoomK);
   }
 
+  function _simplifyLevelToDetailPercent(simplifyLevel) {
+    const level = Math.max(
+      GEOJSON_LIMITS.simplifyLevel.min,
+      Math.min(GEOJSON_LIMITS.simplifyLevel.max, Math.round(Number(simplifyLevel) || 0))
+    );
+    const simplifySpan = GEOJSON_LIMITS.simplifyLevel.max - GEOJSON_LIMITS.simplifyLevel.min;
+    const detailSpan = GEOJSON_LIMITS.detailPercent.max - GEOJSON_LIMITS.detailPercent.min;
+    if (simplifySpan <= 0 || detailSpan <= 0) return GEOJSON_LIMITS.detailPercent.max;
+    const normalized = (level - GEOJSON_LIMITS.simplifyLevel.min) / simplifySpan;
+    const detail = GEOJSON_LIMITS.detailPercent.max - Math.round(normalized * detailSpan);
+    return Math.max(GEOJSON_LIMITS.detailPercent.min, Math.min(GEOJSON_LIMITS.detailPercent.max, detail));
+  }
+
+  function _refreshRangeReadout(slider) {
+    if (!slider) return;
+    const row = slider.closest('.sx-setting-row');
+    const out = row?.querySelector('.sx-range-value');
+    if (!out) return;
+    const stepStr = slider.getAttribute('step') || '';
+    const decimals = (stepStr.includes('.') ? stepStr.split('.')[1].length : 0);
+    const num = Number(slider.value);
+    out.textContent = Number.isFinite(num) ? num.toFixed(Math.min(decimals, 3)) : slider.value;
+  }
+
+  function _syncAdaptiveDetailSliderForSelectedLayer() {
+    const selected = layers.find(l => l.id === selectedId);
+    if (!selected || selected.type !== LAYER_TYPES.GEOJSON) return;
+    if (selected.style?.adaptiveSimplify === false) return;
+    const slider = $('set-gj-simplify');
+    if (!slider) return;
+    const simplifyLevel = _currentGeojsonSimplifyLevel(selected);
+    if (!Number.isFinite(simplifyLevel)) return;
+    const detailPercent = _simplifyLevelToDetailPercent(simplifyLevel);
+    if (Number(slider.value) === detailPercent) return;
+    slider.value = String(detailPercent);
+    _refreshRangeReadout(slider);
+  }
+
   function _syncBasemapLayoutLockUI(layer) {
     const sec = $('settings-basemap');
     if (!sec) return;
@@ -930,6 +1012,7 @@ export async function app(opts = {}) {
       normalizeScale: _normalizeScale,
       populateGeographicRasterSetOptions: _populateGeographicRasterSetOptions,
       getCanvasToSvgThreshold: () => _getCanvasToSvgSwitchZoom(),
+      getCurrentGeojsonSimplifyLevel: _currentGeojsonSimplifyLevel,
       autoGeojsonPerfPolicy: _autoGeojsonPerfPolicyForLayer,
     });
     _syncBasemapLayoutLockUI(layer);
@@ -1185,8 +1268,111 @@ export async function app(opts = {}) {
     await geojsonFeatureInteraction.zoomToSelectedFeatures();
   }
 
-  function _appendRasterTierStatus(baseText, zoomK, asHtml = false) {
-    return basemapStatusController.appendRasterTierStatus(baseText, zoomK, asHtml);
+  function _appendRasterTierStatus(baseText, zoomK, asHtml = false, detailPercent = null) {
+    return basemapStatusController.appendRasterTierStatus(baseText, zoomK, asHtml, detailPercent);
+  }
+
+  function _statusZoomK(zoomK = null) {
+    if (Number.isFinite(zoomK)) return zoomK;
+    const live = Number(renderer.getZoomTransform?.()?.k);
+    return Number.isFinite(live) ? live : 1;
+  }
+
+  function _statusCoordDecimals(zoomK = null) {
+    const k = Math.max(1, _statusZoomK(zoomK));
+    return Math.max(2, Math.min(6, Math.floor(Math.log10(k)) + 2));
+  }
+
+  function _formatLatLon(lat, lon, decimals = 2) {
+    const latNum = Number(lat);
+    const lonNum = Number(lon);
+    if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) return 'center --';
+    const latAbs = Math.abs(latNum).toFixed(decimals);
+    const lonAbs = Math.abs(lonNum).toFixed(decimals);
+    const latHem = latNum >= 0 ? 'N' : 'S';
+    const lonHem = lonNum >= 0 ? 'E' : 'W';
+    return `center ${latAbs}${latHem}, ${lonAbs}${lonHem}`;
+  }
+
+  function _formatDistanceKmOrM(km) {
+    const valueKm = Number(km);
+    if (!Number.isFinite(valueKm) || valueKm <= 0) return '--';
+    if (valueKm < 1) return `${Math.round(valueKm * 1000)} m`;
+    if (valueKm < 100) return `${valueKm.toFixed(2)} km`;
+    if (valueKm < 1000) return `${valueKm.toFixed(1)} km`;
+    return `${Math.round(valueKm)} km`;
+  }
+
+  function _frameGeoMetrics(zoomK = null) {
+    const projection = renderer.getProjection?.();
+    const invert = projection?.invert?.bind(projection);
+    if (!invert) return null;
+
+    const transform = renderer.getZoomTransform?.() || d3.zoomIdentity;
+    const k = Number.isFinite(transform.k) && transform.k > 0 ? transform.k : _statusZoomK(zoomK);
+    const x = Number.isFinite(transform.x) ? transform.x : 0;
+    const y = Number.isFinite(transform.y) ? transform.y : 0;
+
+    const frame = _frameRectForSize(_viewportSize());
+    if (!frame || !Number.isFinite(frame.width) || !Number.isFinite(frame.height) || frame.width <= 0 || frame.height <= 0) {
+      return null;
+    }
+
+    const invPoint = (sx, sy) => {
+      const px = (sx - x) / k;
+      const py = (sy - y) / k;
+      const ll = invert([px, py]);
+      if (!Array.isArray(ll) || !Number.isFinite(ll[0]) || !Number.isFinite(ll[1])) return null;
+      return ll;
+    };
+
+    const cx = frame.x + (frame.width / 2);
+    const cy = frame.y + (frame.height / 2);
+    const left = invPoint(frame.x, cy);
+    const right = invPoint(frame.x + frame.width, cy);
+    const top = invPoint(cx, frame.y);
+    const bottom = invPoint(cx, frame.y + frame.height);
+    const center = invPoint(cx, cy);
+    if (!left || !right || !top || !bottom || !center) return null;
+
+    const earthKm = 6371.0088;
+    const widthKm = d3.geoDistance(left, right) * earthKm;
+    const heightKm = d3.geoDistance(top, bottom) * earthKm;
+
+    return {
+      centerLon: center[0],
+      centerLat: center[1],
+      widthKm,
+      heightKm,
+    };
+  }
+
+  function _selectedLayerStatus(selected, zoomK = null) {
+    if (!selected) return { text: 'layer none', asHtml: false };
+
+    if (selected.type === LAYER_TYPES.GEOJSON) {
+      const stats = renderer.getGeoJSONRenderStats(selected.id);
+      if (!stats) {
+        return { text: `${selected.name || 'GeoJSON'}: objects --, detail --`, asHtml: false };
+      }
+      const visible = stats.hiddenByZoom ? 0 : (Number.isFinite(+stats.renderedFeatures) ? +stats.renderedFeatures : 0);
+      const total = Number.isFinite(+stats.totalFeatures) ? +stats.totalFeatures : 0;
+      const detailPercent = _simplifyLevelToDetailPercent(stats.simplifyLevel);
+      return {
+        text: `${selected.name || 'GeoJSON'}: objects ${visible}/${total}, detail ${detailPercent}%`,
+        asHtml: false,
+      };
+    }
+
+    if (selected.type === LAYER_TYPES.BASEMAP && _isGeographicRasterMode()) {
+      return {
+        text: _appendRasterTierStatus('', zoomK, false),
+        html: _appendRasterTierStatus('', zoomK, true),
+        asHtml: true,
+      };
+    }
+
+    return { text: `${selected.name || selected.type}: active`, asHtml: false };
   }
 
   function _perfDebugTargets() {
@@ -1275,56 +1461,36 @@ export async function app(opts = {}) {
 
   function _updateSelectedGeoJSONStatus(zoomK = null) {
     _updateBasemapReadonlyPanel(zoomK);
+    const selected = layers.find(l => l.id === selectedId) || null;
+    if (selected?.type === LAYER_TYPES.GEOJSON) {
+      _syncAdaptiveDetailSliderForSelectedLayer();
+    }
     if (countryInteractionState.hoveredName() && !mapInteractionController?.isSpaceHeld() && _isCountryHoverEnabled()) {
       _updateCountryStatusBar();
       return;
     }
     if (!statusStats || mapInteractionController?.isSpaceHeld()) return;
-    const selected = layers.find(l => l.id === selectedId);
-    if (!selected || selected.type !== LAYER_TYPES.GEOJSON) {
-      if (_isGeographicRasterMode()) {
-        statusStats.innerHTML = _appendRasterTierStatus('', zoomK, true);
-        statusStats.dataset.mode = 'raster';
-      } else if (statusStats.dataset.mode === 'geojson' || statusStats.dataset.mode === 'raster' || statusStats.dataset.mode === 'geojson+raster') {
-        statusStats.innerHTML = '';
-        delete statusStats.dataset.mode;
-      }
-      return;
-    }
 
-    const stats = renderer.getGeoJSONRenderStats(selected.id);
-    if (!stats) return;
-    const debugPerf = selected?.style?.debugPerfStatus === true;
-    const renderMode = renderer.isUsingCanvas() ? 'canvas' : 'svg';
-    const debugLogMarker = debugPerf && _geojsonPerfEmitCount > 0
-      ? ` log#${_geojsonPerfEmitCount}@${_geojsonPerfLastEmitAt.slice(11, 19)}`
-      : '';
+    const metrics = _frameGeoMetrics(zoomK);
+    const decimals = _statusCoordDecimals(zoomK);
+    const centerText = metrics
+      ? _formatLatLon(metrics.centerLat, metrics.centerLon, decimals)
+      : 'center --';
+    const frameText = metrics
+      ? `frame ${_formatDistanceKmOrM(metrics.widthKm)} x ${_formatDistanceKmOrM(metrics.heightKm)}`
+      : 'frame --';
+    const zoomText = `zoom ${_statusZoomK(zoomK).toFixed(2)}`;
 
-    if (stats.hiddenByZoom) {
-      const debugText = debugPerf
-        ? ` | dbg mode=${renderMode} simp=${Number.isFinite(+stats.simplifyLevel) ? +stats.simplifyLevel : 0} max=${stats.maxVisibleFeatures}${debugLogMarker}`
-        : '';
-      const text = _appendRasterTierStatus(
-        `GeoJSON: 0/${stats.totalFeatures} visible (zoom ${stats.zoomScale.toFixed(2)} < ${stats.minZoom.toFixed(2)})${debugText}`,
-        zoomK,
-        _isGeographicRasterMode()
-      );
-      if (_isGeographicRasterMode()) statusStats.innerHTML = text;
-      else statusStats.textContent = text;
+    const layerStatus = _selectedLayerStatus(selected, zoomK);
+    const prefix = `${centerText} | ${frameText} | ${zoomText}`;
+
+    if (layerStatus.asHtml) {
+      statusStats.innerHTML = `${prefix} | ${layerStatus.html || layerStatus.text}`;
+      statusStats.dataset.mode = 'raster';
     } else {
-      const capped = stats.capped ? `, capped at ${stats.maxVisibleFeatures}` : '';
-      const debugText = debugPerf
-        ? ` | dbg mode=${renderMode} simp=${Number.isFinite(+stats.simplifyLevel) ? +stats.simplifyLevel : 0}${debugLogMarker}`
-        : '';
-      const text = _appendRasterTierStatus(
-        `GeoJSON: ${stats.renderedFeatures}/${stats.totalFeatures} visible (${stats.inViewFeatures} in view${capped})${debugText}`,
-        zoomK,
-        _isGeographicRasterMode()
-      );
-      if (_isGeographicRasterMode()) statusStats.innerHTML = text;
-      else statusStats.textContent = text;
+      statusStats.textContent = `${prefix} | ${layerStatus.text}`;
+      statusStats.dataset.mode = selected?.type === LAYER_TYPES.GEOJSON ? 'geojson' : 'status';
     }
-    statusStats.dataset.mode = _isGeographicRasterMode() ? 'geojson+raster' : 'geojson';
   }
 
   function _isEditableTarget(el) {
