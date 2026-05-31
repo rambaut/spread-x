@@ -12,7 +12,7 @@ import { loadSettings, saveSettings as _saveSettings } from '@artic-network/pear
 import { upgradeAllPaletteColourPickers } from '@artic-network/pearcore/colorpicker.js';
 import { CATEGORICAL_PALETTES } from '@artic-network/pearcore/palettes.js';
 import { analyzeTreeAnnotations, parseTreeData } from '@artic-network/pearcore/tree-io.js';
-import { createLayer, duplicateLayer, LAYER_TYPES, LAYER_ICONS, NE_STANDARD_LAYERS, MAP_OUTLINES } from './layers.js';
+import { createLayer, duplicateLayer, LAYER_TYPES, LAYER_ICONS, NE_STANDARD_LAYERS, MAP_OUTLINES, FRAME_ASPECTS } from './layers.js';
 import {
   detectFileType,
   parseGeoData,
@@ -56,10 +56,140 @@ export async function app(opts = {}) {
   let _zoomHistoryIndex = -1;
   let _zoomHistoryTimer = null;
   let _suppressZoomHistory = false;
+  let _layoutHoveredCountryId = null;
+  let _layoutHoveredCountryName = '';
+  let _layoutSelectedCountryIds = new Set();
+  const _countryFeaturesCache = new Map();
 
   function _isGeographicRasterMode() {
     const base = layers.find(l => l.type === LAYER_TYPES.BASEMAP);
     return base?.style?.baseMode === 'geographic' && (base?.style?.geographicSourceType || 'raster') === 'raster';
+  }
+
+  function _activeBasemapLayer() {
+    return layers.find(l => l.type === LAYER_TYPES.BASEMAP) || null;
+  }
+
+  function _activeCountryScale() {
+    const base = _activeBasemapLayer();
+    const s = base?.style || {};
+    return _normalizeScale(s.geographicCountryScale || s.geographicVectorScale, '50m');
+  }
+
+  function _countryFeatureId(feature) {
+    const p = feature?.properties || {};
+    return String(
+      p.ISO_A3_EH ||
+      p.ADM0_A3 ||
+      p.ISO_A3 ||
+      p.iso_a3 ||
+      p.SOV_A3 ||
+      p.GU_A3 ||
+      p.NAME_EN ||
+      p.NAME ||
+      p.ADMIN ||
+      p.name ||
+      feature?.id ||
+      ''
+    ).trim();
+  }
+
+  function _countryFeatureName(feature) {
+    const p = feature?.properties || {};
+    return String(
+      p.NAME_EN ||
+      p.NAME ||
+      p.ADMIN ||
+      p.NAME_LONG ||
+      p.name ||
+      _countryFeatureId(feature) ||
+      'Unknown'
+    ).trim();
+  }
+
+  function _pickTopoObjectKey(topology, preferredNames = []) {
+    const objects = topology?.objects || {};
+    const keys = Object.keys(objects);
+    if (!keys.length) return null;
+    const preferred = preferredNames.map(name => String(name).toLowerCase());
+    const direct = keys.find(k => preferred.includes(String(k).toLowerCase()));
+    if (direct) return direct;
+    const fuzzy = keys.find(k => preferred.some(name => String(k).toLowerCase().includes(name)));
+    return fuzzy || keys[0];
+  }
+
+  async function _getCountryFeatureCache(scale) {
+    const key = _normalizeScale(scale, '50m');
+    if (_countryFeaturesCache.has(key)) return _countryFeaturesCache.get(key);
+
+    const outline = MAP_OUTLINES.find(o => o.id === `ne-countries-${key}`);
+    if (!outline?.url) return null;
+
+    try {
+      const topology = await fetch(outline.url).then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      });
+      const objKey = _pickTopoObjectKey(topology, ['countries', 'country', 'admin0', 'ne_admin_0_countries']);
+      if (!objKey) return null;
+      const collection = topojson.feature(topology, topology.objects[objKey]);
+      const features = collection?.type === 'FeatureCollection'
+        ? (collection.features || [])
+        : [collection].filter(Boolean);
+
+      const byId = new Map();
+      const nameById = new Map();
+      for (const f of features) {
+        const id = _countryFeatureId(f);
+        if (!id) continue;
+        byId.set(id, f);
+        nameById.set(id, _countryFeatureName(f));
+      }
+
+      const cached = { scale: key, features, byId, nameById };
+      _countryFeaturesCache.set(key, cached);
+      return cached;
+    } catch (err) {
+      console.warn('Could not load country polygons:', err);
+      return null;
+    }
+  }
+
+  function _syncBasemapCountryInteractionRuntime() {
+    const base = _activeBasemapLayer();
+    if (!base) return;
+    base.runtime = {
+      hoveredCountryId: _layoutHoveredCountryId,
+      selectedCountryIds: Array.from(_layoutSelectedCountryIds),
+    };
+  }
+
+  function _countryStatusText() {
+    if (!_layoutHoveredCountryName) return '';
+    const selectedCount = _layoutSelectedCountryIds.size;
+    const selectedSuffix = selectedCount ? ` | selected ${selectedCount}` : '';
+    return `Country: ${_layoutHoveredCountryName}${selectedSuffix}`;
+  }
+
+  function _updateCountryStatusBar() {
+    if (!statusStats) return;
+    const text = _countryStatusText();
+    if (text) statusStats.textContent = text;
+    else _updateSelectedGeoJSONStatus();
+  }
+
+  function _clearLayoutCountryInteraction({ keepSelection = false } = {}) {
+    _layoutHoveredCountryId = null;
+    _layoutHoveredCountryName = '';
+    if (!keepSelection) _layoutSelectedCountryIds = new Set();
+    _syncBasemapCountryInteractionRuntime();
+  }
+
+  function _isCountryHoverEnabled() {
+    if (!_layoutMode) return false;
+    const base = _activeBasemapLayer();
+    if (!base) return false;
+    return base.style?.baseMode === 'geographic' && base.style?.geographicShowCountries !== false;
   }
 
   // ── Commands ─────────────────────────────────────────────────────────
@@ -267,6 +397,7 @@ export async function app(opts = {}) {
 
   async function _render() {
     _resize();
+    _syncBasemapCountryInteractionRuntime();
     renderer.setLayers(layers);
     await renderer.render();
     _updateSelectedGeoJSONStatus();
@@ -1017,6 +1148,9 @@ export async function app(opts = {}) {
 
     document.body.classList.add('layout-mode');
     $('btn-layout-mode')?.classList.add('active');
+    _clearLayoutCountryInteraction({ keepSelection: false });
+    _syncBasemapCountryInteractionRuntime();
+    _getCountryFeatureCache(_activeCountryScale()).catch(() => {});
     _renderLayerList();
     _render();
     _saveState();
@@ -1040,6 +1174,7 @@ export async function app(opts = {}) {
 
     document.body.classList.remove('layout-mode');
     $('btn-layout-mode')?.classList.remove('active');
+    _clearLayoutCountryInteraction({ keepSelection: false });
 
     _renderLayerList();
     _showSettingsForLayer(selectedId);
@@ -1201,6 +1336,114 @@ export async function app(opts = {}) {
     return { x, y, width: rect.width, height: rect.height };
   }
 
+  function _eventToProjectedPoint(e) {
+    const rect = canvasWrapper?.getBoundingClientRect();
+    if (!rect) return null;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const t = renderer.getZoomTransform?.() || d3.zoomIdentity;
+    const px = (x - t.x) / t.k;
+    const py = (y - t.y) / t.k;
+    return [px, py];
+  }
+
+  async function _hitTestCountryFromPointerEvent(e) {
+    if (!_isCountryHoverEnabled()) return null;
+    const projected = _eventToProjectedPoint(e);
+    if (!projected) return null;
+    const projection = renderer.getProjection?.();
+    const lonLat = projection?.invert?.(projected);
+    if (!lonLat) return null;
+
+    const cache = await _getCountryFeatureCache(_activeCountryScale());
+    if (!cache?.features?.length) return null;
+
+    for (const feature of cache.features) {
+      try {
+        if (d3.geoContains(feature, lonLat)) {
+          const id = _countryFeatureId(feature);
+          if (!id) return null;
+          return { id, name: cache.nameById.get(id) || _countryFeatureName(feature) };
+        }
+      } catch {
+        // Ignore malformed geometries.
+      }
+    }
+
+    return null;
+  }
+
+  function _layoutFrameRect(width, height, frameStyle) {
+    const preset = frameStyle?.aspectPreset || 'slideWide';
+    const ratio = FRAME_ASPECTS[preset]?.ratio || (16 / 9);
+    const margin = Math.max(0, Number(frameStyle?.margin ?? 24));
+    const availW = Math.max(1, width - (2 * margin));
+    const availH = Math.max(1, height - (2 * margin));
+    let w = availW;
+    let h = w / ratio;
+    if (h > availH) {
+      h = availH;
+      w = h * ratio;
+    }
+    return { x: (width - w) / 2, y: (height - h) / 2, width: w, height: h };
+  }
+
+  async function _zoomToSelectedCountries() {
+    if (!_layoutSelectedCountryIds.size) return;
+    const cache = await _getCountryFeatureCache(_activeCountryScale());
+    if (!cache) return;
+
+    const selectedFeatures = Array.from(_layoutSelectedCountryIds)
+      .map(id => cache.byId.get(id))
+      .filter(Boolean);
+    if (!selectedFeatures.length) return;
+
+    const path = renderer.getPath?.();
+    const wrapper = $('canvas-wrapper');
+    if (!path || !wrapper) return;
+
+    const featureCollection = { type: 'FeatureCollection', features: selectedFeatures };
+    let bounds;
+    try {
+      bounds = path.bounds(featureCollection);
+    } catch {
+      return;
+    }
+    if (!bounds) return;
+
+    const minX = bounds[0]?.[0];
+    const minY = bounds[0]?.[1];
+    const maxX = bounds[1]?.[0];
+    const maxY = bounds[1]?.[1];
+    if (![minX, minY, maxX, maxY].every(Number.isFinite)) return;
+
+    const frameLayer = layers.find(l => l.type === LAYER_TYPES.FRAME);
+    const frame = _layoutFrameRect(wrapper.clientWidth, wrapper.clientHeight, frameLayer?.style);
+    const padding = Math.max(8, Math.min(frame.width, frame.height) * 0.06);
+    const boxW = Math.max(1, maxX - minX);
+    const boxH = Math.max(1, maxY - minY);
+    const innerW = Math.max(1, frame.width - (2 * padding));
+    const innerH = Math.max(1, frame.height - (2 * padding));
+    const k = Math.max(0.5, Math.min(30, Math.min(innerW / boxW, innerH / boxH)));
+
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const tx = (frame.x + frame.width / 2) - (cx * k);
+    const ty = (frame.y + frame.height / 2) - (cy * k);
+    const target = d3.zoomIdentity.translate(tx, ty).scale(k);
+
+    _suppressZoomHistory = true;
+    try {
+      renderer.syncZoomTransform(target);
+    } finally {
+      _suppressZoomHistory = false;
+    }
+    _recordZoomTransform(target, { immediate: true });
+    _queueRender();
+    _updateCountryStatusBar();
+  }
+
   function _updateZoomBox() {
     if (!_cmdZoomDragging || !zoomBox) return;
     const x = Math.min(_cmdZoomStartX, _cmdZoomCurrentX);
@@ -1299,6 +1542,10 @@ export async function app(opts = {}) {
 
   function _updateSelectedGeoJSONStatus(zoomK = null) {
     _updateBasemapReadonlyPanel(zoomK);
+    if (_layoutMode && _layoutHoveredCountryName && !_spaceHeld) {
+      _updateCountryStatusBar();
+      return;
+    }
     if (!statusStats || _spaceHeld) return;
     const selected = layers.find(l => l.id === selectedId);
     if (!selected || selected.type !== LAYER_TYPES.GEOJSON) {
@@ -1489,6 +1736,13 @@ export async function app(opts = {}) {
     _pointerInCanvasWrapper = false;
     _setAltZoomCursorState(false, false);
     if (_projectionDragging && !_spaceHeld) _endProjectionDrag(e);
+    if (_layoutHoveredCountryId) {
+      _layoutHoveredCountryId = null;
+      _layoutHoveredCountryName = '';
+      _syncBasemapCountryInteractionRuntime();
+      _queueRender();
+      _updateCountryStatusBar();
+    }
   });
 
   canvasWrapper?.addEventListener('pointerenter', () => {
@@ -1516,6 +1770,57 @@ export async function app(opts = {}) {
     if (_pointerInCanvasWrapper || _isCanvasInteractionTarget(e.target)) {
       e.preventDefault();
     }
+  }, { capture: true });
+
+  canvasWrapper?.addEventListener('pointermove', async e => {
+    if (_projectionDragging || _cmdZoomDragging || _spaceHeld) return;
+    if (!_isCountryHoverEnabled()) {
+      if (_layoutHoveredCountryId) {
+        _layoutHoveredCountryId = null;
+        _layoutHoveredCountryName = '';
+        _syncBasemapCountryInteractionRuntime();
+        _queueRender();
+        _updateCountryStatusBar();
+      }
+      return;
+    }
+
+    const hit = await _hitTestCountryFromPointerEvent(e);
+    const nextId = hit?.id || null;
+    if (nextId === _layoutHoveredCountryId) return;
+    _layoutHoveredCountryId = nextId;
+    _layoutHoveredCountryName = hit?.name || '';
+    _syncBasemapCountryInteractionRuntime();
+    _queueRender();
+    _updateCountryStatusBar();
+  });
+
+  canvasWrapper?.addEventListener('click', async e => {
+    if (!_isCountryHoverEnabled() || _projectionDragging || _cmdZoomDragging || _spaceHeld) return;
+    const hit = await _hitTestCountryFromPointerEvent(e);
+    if (!hit?.id) return;
+    const toggle = e.metaKey || e.ctrlKey;
+
+    if (toggle) {
+      if (_layoutSelectedCountryIds.has(hit.id)) _layoutSelectedCountryIds.delete(hit.id);
+      else _layoutSelectedCountryIds.add(hit.id);
+    } else {
+      _layoutSelectedCountryIds = new Set([hit.id]);
+    }
+
+    _layoutHoveredCountryId = hit.id;
+    _layoutHoveredCountryName = hit.name;
+    _syncBasemapCountryInteractionRuntime();
+    _queueRender();
+    _updateCountryStatusBar();
+    _saveState();
+  }, { capture: true });
+
+  canvasWrapper?.addEventListener('dblclick', e => {
+    if (!_isCountryHoverEnabled() || !_layoutSelectedCountryIds.size) return;
+    e.preventDefault();
+    e.stopPropagation();
+    _zoomToSelectedCountries();
   }, { capture: true });
 
   // ── File import logic ────────────────────────────────────────────────

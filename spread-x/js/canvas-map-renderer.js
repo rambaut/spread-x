@@ -287,7 +287,7 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
   async function _drawBasemap(ctx, layer, k) {
     const s = layer.style;
     if ((s.baseMode || 'globe') === 'geographic') {
-      await _drawGeographicBasemap(ctx, s, k);
+      await _drawGeographicBasemap(ctx, s, k, layer);
       return;
     }
 
@@ -401,7 +401,7 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
     }
   }
 
-  async function _drawGeographicBasemap(ctx, style, k) {
+  async function _drawGeographicBasemap(ctx, style, k, layer = null) {
     const sourceType = style.geographicSourceType || 'raster';
     const oceanFill = style.geographicOceanFill || style.oceanFill || '#0d2f40';
     const ctxPath = d3.geoPath(_projection, ctx);
@@ -453,6 +453,43 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
       if (countriesTopo) {
         const key = _pickTopoObjectKey(countriesTopo, ['countries', 'country', 'admin0', 'ne_admin_0_countries']);
         if (key) {
+          const hoveredId = String(layer?.runtime?.hoveredCountryId || '').trim();
+          const selectedIds = new Set((layer?.runtime?.selectedCountryIds || []).map(id => String(id)));
+          if (hoveredId || selectedIds.size) {
+            const fc = topojson.feature(countriesTopo, countriesTopo.objects[key]);
+            const features = fc?.type === 'FeatureCollection' ? (fc.features || []) : [fc].filter(Boolean);
+            const countryId = feature => {
+              const p = feature?.properties || {};
+              return String(
+                p.ISO_A3_EH ||
+                p.ADM0_A3 ||
+                p.ISO_A3 ||
+                p.iso_a3 ||
+                p.SOV_A3 ||
+                p.GU_A3 ||
+                p.NAME_EN ||
+                p.NAME ||
+                p.ADMIN ||
+                p.name ||
+                feature?.id ||
+                ''
+              ).trim();
+            };
+
+            for (const feature of features) {
+              const id = countryId(feature);
+              if (!selectedIds.has(id) && id !== hoveredId) continue;
+              ctx.save();
+              ctx.beginPath();
+              ctxPath(_prepareForSeamClipping(feature));
+              ctx.fillStyle = id === hoveredId
+                ? (style.geographicCountryHoverFill || 'rgba(120, 205, 255, 0.32)')
+                : (style.geographicCountrySelectFill || 'rgba(255, 196, 77, 0.34)');
+              _fillPathEvenOdd(ctx);
+              ctx.restore();
+            }
+          }
+
           const mesh = _prepareForSeamClipping(
             topojson.mesh(countriesTopo, countriesTopo.objects[key], (a, b) => a !== b)
           );

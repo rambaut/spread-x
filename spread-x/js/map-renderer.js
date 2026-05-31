@@ -477,16 +477,66 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
     }
 
     if (s.geographicShowCountries !== false) {
-      await _drawGeographicCountries(g, s);
+      await _drawGeographicCountries(g, s, layer?.runtime);
     }
   }
 
-  async function _drawGeographicCountries(g, style) {
+  async function _drawGeographicCountries(g, style, runtime = null) {
     const scale = _normalizeScale(style.geographicCountryScale || style.geographicVectorScale, '50m');
     const countryTopo = await _fetchOutline(`ne-countries-${scale}`);
     if (!countryTopo) return;
     const key = _pickTopoObjectKey(countryTopo, ['countries', 'country', 'admin0', 'ne_admin_0_countries']);
     if (!key) return;
+
+    const hoveredId = String(runtime?.hoveredCountryId || '').trim();
+    const selectedIds = new Set((runtime?.selectedCountryIds || []).map(id => String(id)));
+
+    if (hoveredId || selectedIds.size) {
+      const fc = topojson.feature(countryTopo, countryTopo.objects[key]);
+      const features = fc?.type === 'FeatureCollection' ? (fc.features || []) : [fc].filter(Boolean);
+      const countryId = feature => {
+        const p = feature?.properties || {};
+        return String(
+          p.ISO_A3_EH ||
+          p.ADM0_A3 ||
+          p.ISO_A3 ||
+          p.iso_a3 ||
+          p.SOV_A3 ||
+          p.GU_A3 ||
+          p.NAME_EN ||
+          p.NAME ||
+          p.ADMIN ||
+          p.name ||
+          feature?.id ||
+          ''
+        ).trim();
+      };
+
+      const selectedFeatures = features
+        .filter(feature => selectedIds.has(countryId(feature)))
+        .map(_prepareForSeamClipping);
+
+      const hoveredFeature = features.find(feature => countryId(feature) === hoveredId);
+
+      if (selectedFeatures.length) {
+        g.selectAll('path.ne-country-selected')
+          .data(selectedFeatures)
+          .join('path')
+          .attr('class', 'ne-country-selected')
+          .attr('d', _path)
+          .attr('fill', style.geographicCountrySelectFill || 'rgba(255, 196, 77, 0.34)')
+          .attr('stroke', 'none');
+      }
+
+      if (hoveredFeature) {
+        g.append('path')
+          .attr('class', 'ne-country-hover')
+          .datum(_prepareForSeamClipping(hoveredFeature))
+          .attr('d', _path)
+          .attr('fill', style.geographicCountryHoverFill || 'rgba(120, 205, 255, 0.32)')
+          .attr('stroke', 'none');
+      }
+    }
 
     const mesh = _prepareForSeamClipping(
       topojson.mesh(countryTopo, countryTopo.objects[key], (a, b) => a !== b)
