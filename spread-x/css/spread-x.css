@@ -140,6 +140,28 @@
   color: var(--pt-text);
 }
 
+.sx-layer-action-btn {
+  margin-left: auto;
+  padding: 2px 7px;
+  border: 1px solid var(--pt-divider, rgba(255,255,255,0.12));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--pt-text);
+  font-size: 0.68rem;
+  line-height: 1.2;
+  opacity: 0.8;
+}
+
+.sx-layer-action-btn:hover {
+  opacity: 1;
+  background: var(--pt-surface-hover);
+}
+
+.sx-layer-action-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* ── Layer controls (bottom of layer panel) ────────────────────────── */
 
 .sx-layer-controls {

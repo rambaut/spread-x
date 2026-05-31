@@ -30,6 +30,15 @@ export function createLayoutModeController({
   let preLayoutVisibilities = {};
   let standardLayerClickBound = false;
 
+  function _commitCurrentViewAsMap() {
+    const t = getZoomTransform?.();
+    if (t) mapViewport?.setViewConstraintBase?.(t, getViewportSize?.());
+    renderLayerList?.();
+    showSettingsForLayer?.(getSelectedId?.());
+    render?.();
+    saveState?.();
+  }
+
   function _setLayoutButtonActive(active) {
     getEl?.('btn-layout-mode')?.classList.toggle('active', !!active);
   }
@@ -154,25 +163,21 @@ export function createLayoutModeController({
     documentRef?.body?.classList.remove('layout-mode');
     _setLayoutButtonActive(false);
     clearLayoutCountryInteraction?.({ keepSelection: false });
-
-    const t = getZoomTransform?.();
-    if (t) mapViewport?.setViewConstraintBase?.(t, getViewportSize?.());
-
-    renderLayerList?.();
-    showSettingsForLayer?.(getSelectedId?.());
-    render?.();
-    saveState?.();
+    _commitCurrentViewAsMap();
   }
 
-  function toggleLayoutMode() {
-    if (getLayoutMode?.()) exitLayoutMode();
-    else enterLayoutMode();
+  function applyCurrentViewAsMap() {
+    if (getLayoutMode?.()) {
+      exitLayoutMode();
+      return;
+    }
+    _commitCurrentViewAsMap();
   }
 
   return {
     enterLayoutMode,
     exitLayoutMode,
-    toggleLayoutMode,
+    applyCurrentViewAsMap,
     populateStandardLayers,
     bindStandardLayerListClicks,
   };

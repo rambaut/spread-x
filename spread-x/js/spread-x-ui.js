@@ -106,7 +106,7 @@ function _buildSettingsPanel() {
     <div id="settings-basemap" class="sx-settings-section" style="display:none">
       <h3><i class="bi bi-globe-americas"></i> Base Map</h3>
       <div id="settings-basemap-layout-note" class="sx-setting-row" style="display:none">
-        <small class="text-muted">Base map styling is editable only in Layout mode. Use the Layout toggle to modify projection, basemap mode, and Natural Earth source settings.</small>
+        <small class="text-muted">Base map styling is editable only in Layout mode. Use the Config button in the Base Map layer row to modify projection, basemap mode, and Natural Earth source settings.</small>
       </div>
       <div id="settings-basemap-readonly" style="display:none">
         <div class="sx-setting-row">
@@ -621,8 +621,8 @@ function _buildAppToolbar() {
     centerHTML: `
       <span id="toolbar-title" class="text-muted" style="font-size:0.85rem">SPREAD-X</span>`,
     rightHTML: `
-      <button id="btn-layout-mode" class="btn btn-sm btn-outline-info" title="Toggle Layout Mode">
-        <i class="bi bi-aspect-ratio me-1"></i>Layout
+      <button id="btn-layout-mode" class="btn btn-sm btn-outline-info" title="Set current view as Map">
+        <i class="bi bi-aspect-ratio me-1"></i>Set Map
       </button>
       <div class="pt-toolbar-sep"></div>
       <button id="btn-zoom-back" class="btn btn-sm btn-outline-secondary" title="Previous zoom" disabled>

@@ -709,6 +709,7 @@ export async function app(opts = {}) {
     for (const layer of listLayers) {
       const visLocked = layer.type === LAYER_TYPES.BASEMAP || layer.type === LAYER_TYPES.FRAME;
       const layoutLocked = _layoutMode && layer.type !== LAYER_TYPES.BASEMAP;
+      const showConfigButton = layer.type === LAYER_TYPES.BASEMAP;
       const el = document.createElement('div');
       el.className = 'sx-layer-item'
         + (layer.id === selectedId ? ' selected' : '')
@@ -720,7 +721,8 @@ export async function app(opts = {}) {
         </button>
         <i class="bi ${LAYER_ICONS[layer.type] || 'bi-square'} sx-layer-icon"></i>
         <span class="sx-render-mode-indicator ${modeClass}" title="Rendered via ${modeLabel}" aria-label="Rendered via ${modeLabel}"></span>
-        <span class="sx-layer-name">${_escapeHtml(layer.name)}</span>`;
+        <span class="sx-layer-name">${_escapeHtml(layer.name)}</span>
+        ${showConfigButton ? `<button class="sx-layer-action-btn" data-layout-config="${layer.id}" title="Configure Base Map in Layout mode" ${_layoutMode ? 'disabled' : ''}>Config</button>` : ''}`;
       layerList.appendChild(el);
     }
     _updateLayerButtons();
@@ -750,6 +752,11 @@ export async function app(opts = {}) {
   }
 
   layerList?.addEventListener('click', e => {
+    const configBtn = e.target.closest('[data-layout-config]');
+    if (configBtn) {
+      _enterLayoutMode();
+      return;
+    }
     // Visibility toggle
     const visBtn = e.target.closest('[data-vis]');
     if (visBtn) {
@@ -1431,7 +1438,7 @@ export async function app(opts = {}) {
       if (!mapViewport.canGoForward()) return;
       _applyHistoryTransform(mapViewport.currentIndex() + 1);
     },
-    onToggleLayoutMode: () => layoutModeController.toggleLayoutMode(),
+    onToggleLayoutMode: () => layoutModeController.applyCurrentViewAsMap(),
     getTreeMapOverlay: () => treeMapOverlay,
     cancelTreeMapping: () => $('btn-tree-map-cancel')?.click(),
     getMapInteractionController: () => mapInteractionController,
