@@ -14,6 +14,11 @@ export function createMapRendererCore({
 } = {}) {
   let _usingCanvas = true;
 
+  function _shouldForceSvgForGeoJSON() {
+    const layers = getLayers?.() || [];
+    return layers.some(layer => layer?.type === 'geojson' && layer?.visible !== false && layer?.data);
+  }
+
   function _threshold() {
     const dynamic = Number(getCanvasToSvgThreshold?.());
     if (Number.isFinite(dynamic) && dynamic > 0) return dynamic;
@@ -42,6 +47,10 @@ export function createMapRendererCore({
     topojson,
     onZoomChange: transform => {
       onZoomChange?.(transform);
+      if (_shouldForceSvgForGeoJSON()) {
+        _switchToSvg(transform);
+        return;
+      }
       if (shouldForceCanvas?.()) return;
       if (transform.k >= _threshold()) _switchToSvg(transform);
     },
@@ -53,6 +62,7 @@ export function createMapRendererCore({
     topojson,
     onZoomChange: transform => {
       onZoomChange?.(transform);
+      if (_shouldForceSvgForGeoJSON()) return;
       if (shouldForceCanvas?.()) {
         _switchToCanvas(transform);
         return;
@@ -63,6 +73,10 @@ export function createMapRendererCore({
 
   function _reconcileRendererMode() {
     const transform = (_usingCanvas ? canvasRenderer : svgRenderer).getZoomTransform?.() || d3.zoomIdentity;
+    if (_shouldForceSvgForGeoJSON()) {
+      _switchToSvg(transform);
+      return;
+    }
     if (shouldForceCanvas?.()) {
       _switchToCanvas(transform);
       return;
@@ -98,6 +112,9 @@ export function createMapRendererCore({
     },
     getGeoJSONRenderStats(id) {
       return (_usingCanvas ? canvasRenderer : svgRenderer).getGeoJSONRenderStats(id);
+    },
+    getLastRenderBreakdown() {
+      return (_usingCanvas ? canvasRenderer : svgRenderer).getLastRenderBreakdown?.() || null;
     },
     setLayerVisibility(id, visible) {
       return (_usingCanvas ? canvasRenderer : svgRenderer).setLayerVisibility(id, visible);

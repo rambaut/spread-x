@@ -38,16 +38,20 @@ export function getSimplifiedLayerData(layer, simplifyLevel, {
   if (!resolved || simplifyLevel <= 0) return resolved;
 
   let cache = layerCache?.get(layer);
-  if (!cache || cache.sourceRef !== resolved || cache.simplifyLevel !== simplifyLevel) {
+  if (!cache || cache.sourceRef !== resolved) {
     cache = {
       sourceRef: resolved,
-      simplifyLevel,
-      simplified: simplifyGeoJSON(resolved, simplifyLevel),
+      byLevel: new Map([[0, resolved]]),
     };
     layerCache?.set(layer, cache);
   }
 
-  return cache.simplified;
+  const level = Math.max(0, Math.min(12, Math.round(Number(simplifyLevel) || 0)));
+  if (!cache.byLevel.has(level)) {
+    cache.byLevel.set(level, simplifyGeoJSON(resolved, level));
+  }
+
+  return cache.byLevel.get(level) || resolved;
 }
 
 export function resolveGeojsonSimplifyLevel({ zoomScale = 1, featureCount = 0, style = {} } = {}) {
@@ -66,17 +70,22 @@ export function resolveGeojsonSimplifyLevel({ zoomScale = 1, featureCount = 0, s
   const detailZoom = Math.max(1.5, Number(style.detailZoom) || 8);
 
   const z = Math.max(1, Number(zoomScale) || 1);
-  if (z >= detailZoom) return minSimplify;
+  // Dense datasets can remain prohibitively expensive at high zoom even when
+  // only a subset is visible. Apply a gentle floor to preserve interactivity.
+  let highZoomFloor = minSimplify;
+  if (featureCount >= 200 && z >= 20) highZoomFloor = Math.max(highZoomFloor, 2);
+  if (featureCount >= 200 && z >= 30) highZoomFloor = Math.max(highZoomFloor, 3);
+
+  if (z >= detailZoom) return highZoomFloor;
 
   const t = Math.max(0, Math.min(1, (z - 1) / (detailZoom - 1)));
   // Reverse smoothstep: high simplification when zoomed out, easing into detail.
   const eased = 1 - (t * t * (3 - (2 * t)));
-  return _clampSimplifyLevel(Math.round(minSimplify + ((maxSimplify - minSimplify) * eased)));
+  const adaptive = _clampSimplifyLevel(Math.round(minSimplify + ((maxSimplify - minSimplify) * eased)));
+  return Math.max(highZoomFloor, adaptive);
 }
 
 export function geojsonRenderPolicy(featureCount, style = {}) {
-  const auto = style.autoPerf !== false;
-  if (auto) return autoGeojsonRenderPolicy(featureCount);
   const minZoom = Math.max(1, Math.min(12, Number(style.minZoom) || 1));
   const maxVisibleFeatures = Math.max(100, Math.min(20000, Math.round(Number(style.maxVisible) || 2000)));
   return { minZoom, maxVisibleFeatures };
@@ -158,5 +167,5 @@ export function decimateLine(coords, stride, closed) {
 }
 
 function _clampSimplifyLevel(value) {
-  return Math.max(0, Math.min(5, Math.round(Number(value) || 0)));
+  return Math.max(0, Math.min(12, Math.round(Number(value) || 0)));
 }

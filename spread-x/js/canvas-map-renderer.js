@@ -76,6 +76,7 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
   const _featureBoundsCache  = new WeakMap();
   const _resolvedGeoDataCache = new WeakMap();
   const _geojsonLayerCache   = new WeakMap();
+  const _preparedGeojsonLayerCache = new WeakMap();
   const _outlineFetcher = createTopologyOutlineFetcher({ mapOutlines: MAP_OUTLINES, fetchImpl: fetch });
   const _rasterLoader = createRasterImageLoader();
   const _cacheState = createMutableCacheState({
@@ -334,6 +335,7 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
       intersectsViewportAfterTransform: _intersectsViewportAfterTransform,
       geojsonRenderPolicy: _geojsonRenderPolicy,
       getSimplifiedLayerData: _getSimplifiedLayerData,
+      getPreparedLayerData: _getPreparedLayerData,
       resolveGeojsonSimplifyLevel: _resolveGeojsonSimplifyLevel,
       prepareForSeamClipping: _prepareForSeamClipping,
       geojsonRenderStats: _geojsonRenderStats,
@@ -434,6 +436,24 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
       resolvedCache: _resolvedGeoDataCache,
       layerCache: _geojsonLayerCache,
     });
+  }
+
+  function _getPreparedLayerData(layer, simplifyLevel) {
+    const simplified = _getSimplifiedLayerData(layer, simplifyLevel);
+    if (!simplified) return null;
+
+    let cache = _preparedGeojsonLayerCache.get(layer);
+    if (!cache || cache.sourceRef !== simplified || cache.simplifyLevel !== simplifyLevel || cache.projId !== _projId) {
+      cache = {
+        sourceRef: simplified,
+        simplifyLevel,
+        projId: _projId,
+        prepared: _prepareForSeamClipping(simplified),
+      };
+      _preparedGeojsonLayerCache.set(layer, cache);
+    }
+
+    return cache.prepared;
   }
 
   function _geojsonRenderPolicy(featureCount, style = {}) {

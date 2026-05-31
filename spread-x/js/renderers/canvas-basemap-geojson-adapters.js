@@ -19,6 +19,44 @@ function geojsonFeatureRuntimeId(feature, index = -1) {
   return index >= 0 ? `feature-${index}` : '';
 }
 
+function _countGeometryVertices(geometry) {
+  if (!geometry) return 0;
+  const coords = geometry.coordinates;
+  if (!coords) return 0;
+
+  switch (geometry.type) {
+    case 'Point':
+      return 1;
+    case 'MultiPoint':
+    case 'LineString':
+      return Array.isArray(coords) ? coords.length : 0;
+    case 'MultiLineString':
+    case 'Polygon':
+      return Array.isArray(coords)
+        ? coords.reduce((sum, line) => sum + (Array.isArray(line) ? line.length : 0), 0)
+        : 0;
+    case 'MultiPolygon':
+      return Array.isArray(coords)
+        ? coords.reduce(
+          (sum, poly) => sum + (Array.isArray(poly)
+            ? poly.reduce((ringSum, ring) => ringSum + (Array.isArray(ring) ? ring.length : 0), 0)
+            : 0),
+          0
+        )
+        : 0;
+    case 'GeometryCollection':
+      return Array.isArray(geometry.geometries)
+        ? geometry.geometries.reduce((sum, g) => sum + _countGeometryVertices(g), 0)
+        : 0;
+    default:
+      return 0;
+  }
+}
+
+function _countFeatureVertices(feature) {
+  return _countGeometryVertices(feature?.geometry);
+}
+
 export async function drawCanvasBasemapLayer({
   ctx,
   layer,
@@ -305,11 +343,17 @@ export function drawCanvasGeoJsonLayer({
   intersectsViewportAfterTransform,
   geojsonRenderPolicy,
   getSimplifiedLayerData,
+  getPreparedLayerData,
   resolveGeojsonSimplifyLevel,
   prepareForSeamClipping,
   geojsonRenderStats,
 } = {}) {
   if (!ctx || !layer?.data || !projection) return;
+
+  const perfNow = () => ((typeof performance !== 'undefined' && typeof performance.now === 'function')
+    ? performance.now()
+    : Date.now());
+  const perfStart = perfNow();
 
   const s = layer.style || {};
   const resolved = getSimplifiedLayerData(layer, 0);
@@ -323,15 +367,16 @@ export function drawCanvasGeoJsonLayer({
     style: s,
   }) ?? Math.max(0, Math.min(5, Math.round(Number(s.simplify ?? 0))));
 
-  const simplified = simplifyLevel > 0
-    ? getSimplifiedLayerData(layer, simplifyLevel)
-    : resolved;
-  if (!simplified) return;
-  const prepared = prepareForSeamClipping(simplified);
+  const prepared = getPreparedLayerData
+    ? getPreparedLayerData(layer, simplifyLevel)
+    : prepareForSeamClipping(simplifyLevel > 0 ? getSimplifiedLayerData(layer, simplifyLevel) : resolved);
+  if (!prepared) return;
   const allFeatures = prepared.type === 'FeatureCollection' ? prepared.features : [prepared];
+  const perfAfterPrep = perfNow();
 
   const policy = geojsonRenderPolicy(allFeatures.length, s);
   if (currentTransform.k < policy.minZoom) {
+    const perfEnd = perfNow();
     geojsonRenderStats.set(layer.id, {
       totalFeatures: allFeatures.length,
       inViewFeatures: 0,
@@ -342,24 +387,99 @@ export function drawCanvasGeoJsonLayer({
       maxVisibleFeatures: policy.maxVisibleFeatures,
       hiddenByZoom: true,
       capped: false,
+      renderedVertexCount: 0,
+      timingsMs: {
+        prep: Math.max(0, perfAfterPrep - perfStart),
+        cull: 0,
+        draw: 0,
+        total: Math.max(0, perfEnd - perfStart),
+      },
     });
     return;
   }
 
   const frameRect = currentFrameRect || { x: 0, y: 0, width, height };
   const features = [];
+  let renderedVertexCount = 0;
   let inViewFeatures = 0;
   let capped = false;
+  const perfCullStart = perfNow();
   for (const feature of allFeatures) {
     const b = featureBounds(feature);
     if (!b) continue;
     if (!intersectsViewportAfterTransform(b, currentTransform, frameRect)) continue;
     inViewFeatures += 1;
     features.push(feature);
+    renderedVertexCount += _countFeatureVertices(feature);
     if (features.length >= policy.maxVisibleFeatures) {
       capped = true;
       break;
     }
+  }
+  const perfAfterCull = perfNow();
+
+  let perfAfterDraw = perfAfterCull;
+  if (features.length) {
+    const perfDrawStart = perfNow();
+
+    const ctxPath = d3.geoPath(projection, ctx);
+    const fc = { type: 'FeatureCollection', features };
+
+    if (s.fill && s.fill !== 'none') {
+      ctx.save();
+      ctx.beginPath();
+      ctxPath(fc);
+      ctx.fillStyle = s.fill;
+      ctx.globalAlpha *= (s.fillOpacity ?? 1);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    if (s.stroke && s.stroke !== 'none' && s.strokeWidth > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctxPath(fc);
+      ctx.strokeStyle = s.stroke;
+      ctx.lineWidth = s.strokeWidth / k;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    const hoveredId = String(layer?.runtime?.hoveredFeatureId || '').trim();
+    const selectedIds = new Set((layer?.runtime?.selectedFeatureIds || []).map(id => String(id)));
+    if (hoveredId || selectedIds.size) {
+      for (const [idx, feature] of features.entries()) {
+        const id = geojsonFeatureRuntimeId(feature, idx);
+        if (!selectedIds.has(id) && id !== hoveredId) continue;
+        ctx.save();
+        ctx.beginPath();
+        ctxPath(feature);
+        ctx.fillStyle = id === hoveredId
+          ? (s.featureHoverFill || 'rgba(120, 205, 255, 0.32)')
+          : (s.featureSelectFill || 'rgba(255, 196, 77, 0.34)');
+        ctx.fill();
+
+        const stroke = id === hoveredId
+          ? (s.featureHoverStroke || 'none')
+          : (s.featureSelectStroke || 'none');
+        if (stroke && stroke !== 'none') {
+          ctx.strokeStyle = stroke;
+          const strokeWidth = id === hoveredId
+            ? (s.featureHoverStrokeWidth ?? s.strokeWidth ?? 1)
+            : (s.featureSelectStrokeWidth ?? s.strokeWidth ?? 1);
+          ctx.lineWidth = strokeWidth / k;
+          ctx.lineJoin = 'round';
+          ctx.lineCap = 'round';
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      }
+    }
+
+    perfAfterDraw = perfNow();
   }
 
   geojsonRenderStats.set(layer.id, {
@@ -372,64 +492,12 @@ export function drawCanvasGeoJsonLayer({
     maxVisibleFeatures: policy.maxVisibleFeatures,
     hiddenByZoom: false,
     capped,
+    renderedVertexCount,
+    timingsMs: {
+      prep: Math.max(0, perfAfterPrep - perfStart),
+      cull: Math.max(0, perfAfterCull - perfCullStart),
+      draw: Math.max(0, perfAfterDraw - perfAfterCull),
+      total: Math.max(0, perfAfterDraw - perfStart),
+    },
   });
-
-  if (!features.length) return;
-
-  const ctxPath = d3.geoPath(projection, ctx);
-  const fc = { type: 'FeatureCollection', features };
-
-  if (s.fill && s.fill !== 'none') {
-    ctx.save();
-    ctx.beginPath();
-    ctxPath(fc);
-    ctx.fillStyle = s.fill;
-    ctx.globalAlpha *= (s.fillOpacity ?? 1);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  if (s.stroke && s.stroke !== 'none' && s.strokeWidth > 0) {
-    ctx.save();
-    ctx.beginPath();
-    ctxPath(fc);
-    ctx.strokeStyle = s.stroke;
-    ctx.lineWidth = s.strokeWidth / k;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  const hoveredId = String(layer?.runtime?.hoveredFeatureId || '').trim();
-  const selectedIds = new Set((layer?.runtime?.selectedFeatureIds || []).map(id => String(id)));
-  if (!hoveredId && !selectedIds.size) return;
-
-  for (const [idx, feature] of features.entries()) {
-    const id = geojsonFeatureRuntimeId(feature, idx);
-    if (!selectedIds.has(id) && id !== hoveredId) continue;
-    ctx.save();
-    ctx.beginPath();
-    ctxPath(feature);
-    ctx.fillStyle = id === hoveredId
-      ? (s.featureHoverFill || 'rgba(120, 205, 255, 0.32)')
-      : (s.featureSelectFill || 'rgba(255, 196, 77, 0.34)');
-    ctx.fill();
-
-    const stroke = id === hoveredId
-      ? (s.featureHoverStroke || 'none')
-      : (s.featureSelectStroke || 'none');
-    if (stroke && stroke !== 'none') {
-      ctx.strokeStyle = stroke;
-      const strokeWidth = id === hoveredId
-        ? (s.featureHoverStrokeWidth ?? s.strokeWidth ?? 1)
-        : (s.featureSelectStrokeWidth ?? s.strokeWidth ?? 1);
-      ctx.lineWidth = strokeWidth / k;
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
-      ctx.stroke();
-    }
-
-    ctx.restore();
-  }
 }

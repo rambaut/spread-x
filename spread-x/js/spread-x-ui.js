@@ -478,12 +478,6 @@ function _buildSettingsPanel() {
       <hr />
       <h3><i class="bi bi-speedometer2"></i> Performance</h3>
       <div class="sx-setting-row">
-        <label>
-          <input type="checkbox" id="set-gj-perf-auto" class="form-check-input" checked />
-          Auto-tune
-        </label>
-      </div>
-      <div class="sx-setting-row">
         <label for="set-gj-min-zoom">Min zoom to render</label>
         <input type="range" id="set-gj-min-zoom" class="form-range" min="1" max="12" step="0.25" value="2" />
       </div>
@@ -510,8 +504,13 @@ function _buildSettingsPanel() {
         <input type="range" id="set-gj-detail-zoom" class="form-range" min="2" max="20" step="0.5" value="8" />
       </div>
       <div class="sx-setting-row">
-        <label for="set-render-svg-switch-zoom">Canvas → SVG zoom</label>
-        <input type="range" id="set-render-svg-switch-zoom" class="form-range" min="2" max="50" step="0.5" value="8" />
+        <label>
+          <input type="checkbox" id="set-gj-debug-perf" class="form-check-input" />
+          Debug perf status
+        </label>
+      </div>
+      <div class="sx-setting-row" style="justify-content:flex-end">
+        <button id="btn-gj-auto-perf" class="btn btn-sm btn-outline-secondary" type="button" title="Set layer sliders to computed auto values">Auto</button>
       </div>
     </div>
 

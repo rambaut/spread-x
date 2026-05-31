@@ -12,8 +12,13 @@ export function syncOceanLayerUI({ getEl, layer } = {}) {
   oceanSection.style.display = isOceansLayer(layer) ? '' : 'none';
 }
 
+export function syncGeojsonAutoButtonUI({ getEl, layer, layerTypes } = {}) {
+  const btn = getEl?.('btn-gj-auto-perf');
+  if (!btn) return;
+  btn.style.display = layer?.type === layerTypes?.GEOJSON ? '' : 'none';
+}
+
 export function syncGeoJSONPerfUI({ getEl, layer, autoGeojsonPerfPolicy } = {}) {
-  const autoPerf = getEl?.('set-gj-perf-auto')?.checked !== false;
   const adaptiveSimplify = getEl?.('set-gj-adaptive-simplify')?.checked !== false;
   const minZoom = getEl?.('set-gj-min-zoom');
   const maxVisible = getEl?.('set-gj-max-visible');
@@ -21,16 +26,8 @@ export function syncGeoJSONPerfUI({ getEl, layer, autoGeojsonPerfPolicy } = {}) 
   const maxSimplify = getEl?.('set-gj-max-simplify');
   const detailZoom = getEl?.('set-gj-detail-zoom');
 
-  if (autoPerf && typeof autoGeojsonPerfPolicy === 'function' && layer) {
-    const policy = autoGeojsonPerfPolicy(layer);
-    if (policy) {
-      if (minZoom && Number.isFinite(+policy.minZoom)) minZoom.value = +policy.minZoom;
-      if (maxVisible && Number.isFinite(+policy.maxVisibleFeatures)) maxVisible.value = +policy.maxVisibleFeatures;
-    }
-  }
-
-  if (minZoom) minZoom.disabled = autoPerf;
-  if (maxVisible) maxVisible.disabled = autoPerf;
+  if (minZoom) minZoom.disabled = false;
+  if (maxVisible) maxVisible.disabled = false;
   if (simplify) simplify.disabled = false;
   if (maxSimplify) maxSimplify.disabled = !adaptiveSimplify;
   if (detailZoom) detailZoom.disabled = !adaptiveSimplify;
@@ -109,7 +106,6 @@ export function populateSettingsForLayer({
       getEl('set-gj-fill-op').value = s.fillOpacity;
       getEl('set-gj-stroke').value = s.stroke;
       getEl('set-gj-sw').value = s.strokeWidth;
-      if (getEl('set-gj-perf-auto')) getEl('set-gj-perf-auto').checked = s.autoPerf !== false;
       if (getEl('set-gj-min-zoom')) getEl('set-gj-min-zoom').value = Number.isFinite(+s.minZoom) ? +s.minZoom : 2;
       if (getEl('set-gj-max-visible')) getEl('set-gj-max-visible').value = Number.isFinite(+s.maxVisible) ? +s.maxVisible : 2000;
       if (getEl('set-gj-simplify')) {
@@ -125,7 +121,9 @@ export function populateSettingsForLayer({
         const threshold = Number(getCanvasToSvgThreshold?.());
         getEl('set-render-svg-switch-zoom').value = Number.isFinite(threshold) ? threshold : 8;
       }
+      if (getEl('set-gj-debug-perf')) getEl('set-gj-debug-perf').checked = s.debugPerfStatus === true;
       syncOceanLayerUI({ getEl, layer });
+      syncGeojsonAutoButtonUI({ getEl, layer, layerTypes });
       syncGeoJSONPerfUI({ getEl, layer, autoGeojsonPerfPolicy });
       break;
     case layerTypes.FRAME:
@@ -239,13 +237,14 @@ export function readSettingsFromLayerUI({
       s.fillOpacity = +getEl('set-gj-fill-op')?.value;
       s.stroke = getEl('set-gj-stroke')?.value;
       s.strokeWidth = +getEl('set-gj-sw')?.value;
-      if (getEl('set-gj-perf-auto')) s.autoPerf = getEl('set-gj-perf-auto')?.checked;
+      s.autoPerf = false;
       if (getEl('set-gj-min-zoom')) s.minZoom = +getEl('set-gj-min-zoom')?.value;
       if (getEl('set-gj-max-visible')) s.maxVisible = +getEl('set-gj-max-visible')?.value;
       if (getEl('set-gj-simplify')) s.simplify = +getEl('set-gj-simplify')?.value;
       if (getEl('set-gj-adaptive-simplify')) s.adaptiveSimplify = getEl('set-gj-adaptive-simplify')?.checked;
       if (getEl('set-gj-max-simplify')) s.maxSimplify = +getEl('set-gj-max-simplify')?.value;
       if (getEl('set-gj-detail-zoom')) s.detailZoom = +getEl('set-gj-detail-zoom')?.value;
+      if (getEl('set-gj-debug-perf')) s.debugPerfStatus = getEl('set-gj-debug-perf')?.checked;
       s.minSimplify = Number.isFinite(+s.simplify) ? +s.simplify : 0;
       if (getEl('set-render-svg-switch-zoom')) {
         setCanvasToSvgThreshold?.(+getEl('set-render-svg-switch-zoom')?.value);

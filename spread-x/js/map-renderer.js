@@ -49,15 +49,19 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
   let _currentFrameRect = null;
   let _projectionStamp = 0;
   let _projectionSignature = '';
+  let _lastBasemapRenderKey = '';
+  let _nextLayerDataObjectId = 1;
   let _viewportRenderQueued = false;
-  let _lastViewportRenderZoom = 1;
   let _renderInFlight = false;
-  let _renderAgain = false;
   let _geojsonRenderStats = new Map();
+  let _lastRenderBreakdown = null;
+  const _lastStaticLayerRenderKeys = new Map();
 
   const _featureBoundsCache = new WeakMap();
   const _resolvedGeoDataCache = new WeakMap();
   const _geojsonLayerCache = new WeakMap();
+  const _preparedGeojsonLayerCache = new WeakMap();
+  const _layerDataObjectIds = new WeakMap();
 
   const _outlineFetcher = createTopologyOutlineFetcher({ mapOutlines: MAP_OUTLINES, fetchImpl: fetch });
   const _cacheState = createMutableCacheState({ basemapCache: null });
@@ -97,15 +101,10 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
       _currentTransform = transform;
       gMap.attr('transform', transform);
       if (!_suppressZoomCallback) onZoomChange?.(transform);
-      if (_hasLargeGeoJSONLayer() && Math.abs(transform.k - _lastViewportRenderZoom) >= 0.5) {
-        _lastViewportRenderZoom = transform.k;
-        _queueViewportRender();
-      }
     })
     .on('end', ({ transform }) => {
       if (!_suppressZoomCallback) onZoomChange?.(transform);
       if (_hasLargeGeoJSONLayer()) {
-        _lastViewportRenderZoom = _currentTransform?.k || _lastViewportRenderZoom;
         _queueViewportRender();
       }
     });
@@ -120,9 +119,48 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
 
   function setLayers(layers) { _layers = layers; }
 
+  function _layerDataKey(layer) {
+    const data = layer?.data;
+    if (!data || (typeof data !== 'object' && typeof data !== 'function')) return String(data ?? 'null');
+    let id = _layerDataObjectIds.get(data);
+    if (!id) {
+      id = _nextLayerDataObjectId++;
+      _layerDataObjectIds.set(data, id);
+    }
+    return `obj:${id}`;
+  }
+
+  function _staticLayerRenderKey(layer) {
+    return JSON.stringify({
+      projectionStamp: _projectionStamp,
+      opacity: layer?.opacity ?? 1,
+      style: layer?.style || null,
+      dataKey: _layerDataKey(layer),
+    });
+  }
+
   async function _renderNow() {
+    const perfNow = () => ((typeof performance !== 'undefined' && typeof performance.now === 'function')
+      ? performance.now()
+      : Date.now());
+    const roundMs = value => Math.round((Math.max(0, Number(value) || 0)) * 100) / 100;
+    const breakdown = {
+      projectionMs: 0,
+      cleanupMs: 0,
+      backgroundMs: 0,
+      basemapMs: 0,
+      geojsonMs: 0,
+      pointsMs: 0,
+      treeMs: 0,
+      frameMs: 0,
+      renderedLayerCount: 0,
+      layerTimers: [],
+      totalMs: 0,
+    };
+    const renderStart = perfNow();
+
+    const projectionStart = perfNow();
     gFrameBackground.selectAll('*').remove();
-    gMap.selectAll('*').remove();
     gOverlay.selectAll('*').remove();
     _geojsonRenderStats = new Map();
 
@@ -159,7 +197,37 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
     } else {
       gMap.attr('clip-path', null);
     }
+    breakdown.projectionMs += Math.max(0, perfNow() - projectionStart);
 
+    const cleanupStart = perfNow();
+    const basemapRenderKey = JSON.stringify({
+      projectionStamp: _projectionStamp,
+      basemapStyle: base?.style || null,
+      basemapOpacity: base?.opacity ?? 1,
+      basemapVisible: base?.visible !== false,
+    });
+    const canReuseBasemap = !!base && base.visible !== false && basemapRenderKey === _lastBasemapRenderKey;
+    if (canReuseBasemap) {
+      const visibleLayerIds = new Set(
+        _layers
+          .filter(layer => layer.visible && layer.type !== LAYER_TYPES.FRAME)
+          .map(layer => String(layer.id))
+      );
+      gMap.selectAll('g.layer').filter(function () {
+        const cls = this.getAttribute('class') || '';
+        const classes = cls.split(/\s+/);
+        if (classes.includes('layer-geojson')) return true;
+        if (classes.includes('layer-basemap')) return false;
+        const id = String(this.getAttribute('data-layer-id') || '');
+        return id && !visibleLayerIds.has(id);
+      }).remove();
+    } else {
+      gMap.selectAll('*').remove();
+      _lastStaticLayerRenderKeys.clear();
+    }
+    breakdown.cleanupMs += Math.max(0, perfNow() - cleanupStart);
+
+    const backgroundStart = perfNow();
     const backgroundFill = base?.style?.backgroundFill ||
       (frameLayer?.visible && frameLayer.style?.showFill ? frameLayer.style?.fill : null);
     const backgroundOpacity = Number(base?.style?.backgroundOpacity ??
@@ -174,24 +242,70 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
         .attr('stroke', 'none')
         .attr('opacity', base?.opacity ?? 1);
     }
+      breakdown.backgroundMs += Math.max(0, perfNow() - backgroundStart);
 
     for (const layer of _layers) {
       if (!layer.visible) continue;
       if (layer.type === LAYER_TYPES.FRAME) continue;
+
+      if (canReuseBasemap && (layer.type === LAYER_TYPES.POINTS || layer.type === LAYER_TYPES.TREE)) {
+        const layerId = String(layer.id);
+        const staticKey = _staticLayerRenderKey(layer);
+        const existing = gMap.select(`g.layer-${layer.type}[data-layer-id="${layerId}"]`);
+        if (!existing.empty() && _lastStaticLayerRenderKeys.get(layerId) === staticKey) {
+          existing.attr('opacity', layer.opacity);
+          continue;
+        }
+        if (!existing.empty()) existing.remove();
+        _lastStaticLayerRenderKeys.set(layerId, staticKey);
+      } else {
+        _lastStaticLayerRenderKeys.delete(String(layer.id));
+      }
+
       const g = gMap.append('g')
         .attr('class', `layer layer-${layer.type}`)
         .attr('data-layer-id', layer.id)
         .attr('opacity', layer.opacity);
 
+      const layerStart = perfNow();
+
       switch (layer.type) {
-        case LAYER_TYPES.BASEMAP: await _renderBasemap(g, layer);  break;
+        case LAYER_TYPES.BASEMAP: {
+          if (canReuseBasemap) {
+            const existing = gMap.select(`g.layer-basemap[data-layer-id="${layer.id}"]`);
+            if (!existing.empty()) {
+              existing.attr('opacity', layer.opacity);
+              g.remove();
+              break;
+            }
+          }
+          await _renderBasemap(g, layer);
+          _lastBasemapRenderKey = basemapRenderKey;
+          break;
+        }
         case LAYER_TYPES.GEOJSON:       _renderGeoJSON(g, layer);  break;
         case LAYER_TYPES.POINTS:        _renderPoints(g, layer);   break;
         case LAYER_TYPES.TREE:          _renderTree(g, layer);     break;
       }
+
+      const layerMs = Math.max(0, perfNow() - layerStart);
+      breakdown.renderedLayerCount += 1;
+      breakdown.layerTimers.push({
+        id: layer.id,
+        name: layer.name || layer.id,
+        type: layer.type,
+        ms: roundMs(layerMs),
+      });
+      if (layer.type === LAYER_TYPES.BASEMAP) breakdown.basemapMs += layerMs;
+      else if (layer.type === LAYER_TYPES.GEOJSON) breakdown.geojsonMs += layerMs;
+      else if (layer.type === LAYER_TYPES.POINTS) breakdown.pointsMs += layerMs;
+      else if (layer.type === LAYER_TYPES.TREE) breakdown.treeMs += layerMs;
     }
 
+    if (!base || base.visible === false) _lastBasemapRenderKey = '';
+
     // Draw frame on top as a dedicated overlay layer.
+    const frameStart = perfNow();
     if (frameLayer?.visible) {
       gOverlay.append('path')
         .attr('class', 'layer layer-frame')
@@ -203,20 +317,33 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
         .attr('stroke-linecap', 'round')
         .attr('opacity', frameLayer.opacity ?? 1);
     }
+    breakdown.frameMs += Math.max(0, perfNow() - frameStart);
+
+    breakdown.totalMs = Math.max(0, perfNow() - renderStart);
+    breakdown.projectionMs = roundMs(breakdown.projectionMs);
+    breakdown.cleanupMs = roundMs(breakdown.cleanupMs);
+    breakdown.backgroundMs = roundMs(breakdown.backgroundMs);
+    breakdown.basemapMs = roundMs(breakdown.basemapMs);
+    breakdown.geojsonMs = roundMs(breakdown.geojsonMs);
+    breakdown.pointsMs = roundMs(breakdown.pointsMs);
+    breakdown.treeMs = roundMs(breakdown.treeMs);
+    breakdown.frameMs = roundMs(breakdown.frameMs);
+    breakdown.totalMs = roundMs(breakdown.totalMs);
+    breakdown.topLayers = breakdown.layerTimers
+      .slice()
+      .sort((a, b) => b.ms - a.ms)
+      .slice(0, 5);
+    _lastRenderBreakdown = breakdown;
   }
 
   async function render() {
     if (_renderInFlight) {
-      _renderAgain = true;
       return;
     }
 
     _renderInFlight = true;
     try {
-      do {
-        _renderAgain = false;
-        await _renderNow();
-      } while (_renderAgain);
+      await _renderNow();
     } finally {
       _renderInFlight = false;
     }
@@ -229,6 +356,7 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
   function getProjection() { return _projection; }
   function getPath()       { return _path; }
   function getGeoJSONRenderStats(layerId) { return _geojsonRenderStats.get(layerId) || null; }
+  function getLastRenderBreakdown() { return _lastRenderBreakdown; }
 
   function setLayerVisibility(layerId, visible) {
     if (!layerId) return false;
@@ -325,18 +453,14 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
     });
   }
 
-  function _isOceansLayer(layer) {
-    if (!layer || layer.type !== LAYER_TYPES.GEOJSON) return false;
-    const n = (layer.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    return n === 'oceans' || n === 'oceanmask';
-  }
-
   function _renderGeoJSON(g, layer) {
     renderSvgGeoJsonLayer({
       g,
       layer,
       d3,
+      topojson,
       path: _path,
+      projectionStamp: _projectionStamp,
       currentTransform: _currentTransform || d3.zoomTransform(svg.node()) || d3.zoomIdentity,
       currentFrameRect: _currentFrameRect,
       width: _width,
@@ -345,6 +469,7 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
       intersectsViewportAfterTransform: _intersectsViewportAfterTransform,
       geojsonRenderPolicy: _geojsonRenderPolicy,
       getSimplifiedLayerData: _getSimplifiedLayerData,
+      getPreparedLayerData: _getPreparedLayerData,
       resolveGeojsonSimplifyLevel: _resolveGeojsonSimplifyLevel,
       prepareForSeamClipping: _prepareForSeamClipping,
       geojsonRenderStats: _geojsonRenderStats,
@@ -449,6 +574,24 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
     });
   }
 
+  function _getPreparedLayerData(layer, simplifyLevel) {
+    const simplified = _getSimplifiedLayerData(layer, simplifyLevel);
+    if (!simplified) return null;
+
+    let cache = _preparedGeojsonLayerCache.get(layer);
+    if (!cache || cache.sourceRef !== simplified || cache.simplifyLevel !== simplifyLevel || cache.projId !== _projId) {
+      cache = {
+        sourceRef: simplified,
+        simplifyLevel,
+        projId: _projId,
+        prepared: _prepareForSeamClipping(simplified),
+      };
+      _preparedGeojsonLayerCache.set(layer, cache);
+    }
+
+    return cache.prepared;
+  }
+
   function _resolveLayerGeoJSON(layer) {
     return _resolveLayerGeoJSONShared(layer, {
       topojson,
@@ -461,6 +604,7 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
     _viewportRenderQueued = true;
     requestAnimationFrame(() => {
       _viewportRenderQueued = false;
+      if (_renderInFlight) return;
       // Skip render if SVG element is hidden (inactive renderer)
       if (svgElement.style.display !== 'none') render();
     });
@@ -487,6 +631,7 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
     getProjection,
     getPath,
     getGeoJSONRenderStats,
+    getLastRenderBreakdown,
     setLayerVisibility,
     serializeSvg,
     setSpacePanActive,
