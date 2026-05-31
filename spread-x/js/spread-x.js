@@ -1058,9 +1058,22 @@ export async function app(opts = {}) {
   let _cmdZoomCurrentX = 0;
   let _cmdZoomCurrentY = 0;
   let _statusBeforeSpaceHint = '';
+  let _pointerInCanvasWrapper = false;
 
   function _isAltZoomModifier(e) {
     return !!e.altKey;
+  }
+
+  function _isCanvasInteractionTarget(target) {
+    if (!canvasWrapper || !target) return false;
+    return canvasWrapper.contains(target);
+  }
+
+  function _isBrowserZoomHotkey(e) {
+    if (!(e.metaKey || e.ctrlKey)) return false;
+    if (e.altKey) return false;
+    const key = String(e.key || '').toLowerCase();
+    return key === '+' || key === '=' || key === '-' || key === '_';
   }
 
   function _setAltZoomCursorState(ready, dragging = false) {
@@ -1277,6 +1290,7 @@ export async function app(opts = {}) {
   });
 
   canvasWrapper?.addEventListener('pointerdown', e => {
+    _pointerInCanvasWrapper = true;
     if (_isAltZoomModifier(e) && !_spaceHeld) {
       const p = _toLocalPoint(e);
       if (!p) return;
@@ -1361,9 +1375,37 @@ export async function app(opts = {}) {
     _setAltZoomCursorState(false, false);
   });
   canvasWrapper?.addEventListener('pointerleave', e => {
+    _pointerInCanvasWrapper = false;
     _setAltZoomCursorState(false, false);
     if (_projectionDragging && !_spaceHeld) _endProjectionDrag(e);
   });
+
+  canvasWrapper?.addEventListener('pointerenter', () => {
+    _pointerInCanvasWrapper = true;
+  });
+
+  // Prevent browser page zoom while interacting with the map surface.
+  canvasWrapper?.addEventListener('wheel', e => {
+    if (e.ctrlKey || e.metaKey) e.preventDefault();
+  }, { passive: false });
+
+  // Safari trackpad pinch/gesture events can trigger page zoom unless blocked.
+  const _preventBrowserGestureZoom = e => {
+    if (_pointerInCanvasWrapper || _isCanvasInteractionTarget(e.target) || _cmdZoomDragging || _projectionDragging) {
+      e.preventDefault();
+    }
+  };
+  window.addEventListener('gesturestart', _preventBrowserGestureZoom, { passive: false, capture: true });
+  window.addEventListener('gesturechange', _preventBrowserGestureZoom, { passive: false, capture: true });
+  window.addEventListener('gestureend', _preventBrowserGestureZoom, { passive: false, capture: true });
+
+  // Block browser zoom hotkeys while focus/interaction is inside the map area.
+  window.addEventListener('keydown', e => {
+    if (!_isBrowserZoomHotkey(e)) return;
+    if (_pointerInCanvasWrapper || _isCanvasInteractionTarget(e.target)) {
+      e.preventDefault();
+    }
+  }, { capture: true });
 
   // ── File import logic ────────────────────────────────────────────────
 

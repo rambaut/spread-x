@@ -224,6 +224,8 @@
   position: relative;
   flex: 1;
   overflow: hidden;
+  touch-action: none;
+  overscroll-behavior: contain;
 }
 
 #map-svg,
