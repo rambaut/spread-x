@@ -105,6 +105,40 @@ function _buildSettingsPanel() {
     <!-- ── Base map ── -->
     <div id="settings-basemap" class="sx-settings-section" style="display:none">
       <h3><i class="bi bi-globe-americas"></i> Base Map</h3>
+      <div id="settings-basemap-layout-note" class="sx-setting-row" style="display:none">
+        <small class="text-muted">Base map styling is editable only in Layout mode. Use the Layout toggle to modify projection, basemap mode, and Natural Earth source settings.</small>
+      </div>
+      <div id="settings-basemap-readonly" style="display:none">
+        <div class="sx-setting-row">
+          <label>Mode choices</label>
+          <span id="bm-ro-mode-choices" class="sx-setting-value"></span>
+        </div>
+        <div class="sx-setting-row">
+          <label>Source choices</label>
+          <span id="bm-ro-source-choices" class="sx-setting-value"></span>
+        </div>
+        <hr />
+        <div class="sx-setting-row">
+          <label>Current mode</label>
+          <span id="bm-ro-mode" class="sx-setting-value"></span>
+        </div>
+        <div class="sx-setting-row">
+          <label>Current source</label>
+          <span id="bm-ro-source" class="sx-setting-value"></span>
+        </div>
+        <div class="sx-setting-row">
+          <label>Zoom factor</label>
+          <span id="bm-ro-zoom" class="sx-setting-value"></span>
+        </div>
+        <div class="sx-setting-row">
+          <label>Viewport center</label>
+          <span id="bm-ro-center" class="sx-setting-value"></span>
+        </div>
+        <div class="sx-setting-row">
+          <label>Detail level</label>
+          <span id="bm-ro-detail" class="sx-setting-value"></span>
+        </div>
+      </div>
 
       <div class="sx-setting-row">
         <label for="set-bm-mode">Base map mode</label>

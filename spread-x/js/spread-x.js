@@ -543,6 +543,109 @@ export async function app(opts = {}) {
 
   const SETTINGS_SECTIONS = ['settings-basemap', 'settings-frame', 'settings-geojson', 'settings-points', 'settings-tree'];
 
+  function _formatLatLon(lat, lon) {
+    const latAbs = Math.abs(Number(lat) || 0).toFixed(2);
+    const lonAbs = Math.abs(Number(lon) || 0).toFixed(2);
+    return `${latAbs}${(lat || 0) >= 0 ? 'N' : 'S'}, ${lonAbs}${(lon || 0) >= 0 ? 'E' : 'W'}`;
+  }
+
+  function _projectionLabel(projId) {
+    if (!projId) return 'Natural Earth';
+    const projectionSelect = $('set-bm-projection');
+    const option = projectionSelect?.querySelector(`option[value="${projId}"]`);
+    return option?.textContent?.trim() || projId.replace(/^geo/, '');
+  }
+
+  function _currentBasemapDetailLabel(zoomK = null) {
+    const base = layers.find(l => l.type === LAYER_TYPES.BASEMAP);
+    if (!base) return 'n/a';
+    const s = base.style || {};
+    const mode = s.baseMode || 'globe';
+    const source = s.geographicSourceType || 'raster';
+    const k = Number.isFinite(zoomK) ? zoomK : (renderer.getZoomTransform?.()?.k || 1);
+
+    if (mode === 'geographic') {
+      if (source === 'raster') {
+        const setName = String(s.geographicRasterSet || 'NE1').toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+        const threshold = Number(s.geographicRasterSwitchZoom ?? 2.5);
+        const forcedTier = String(s.geographicRasterForceTier || 'auto').toLowerCase();
+        const tier = forcedTier === 'hr' ? 'HR' : forcedTier === '50m' ? '50M' : (k >= threshold ? 'HR' : '50M');
+        const forced = forcedTier === 'auto' ? '' : ' forced';
+        return `${setName} ${tier}${forced}`;
+      }
+
+      const landScale = _normalizeScale(s.geographicVectorScale, '50m').toUpperCase();
+      const countryScale = _normalizeScale(s.geographicCountryScale, '50m').toUpperCase();
+      const countryState = s.geographicShowCountries === false ? 'countries off' : `countries ${countryScale}`;
+      return `land ${landScale}, ${countryState}`;
+    }
+
+    return `projection ${_projectionLabel(s.projection || 'geoNaturalEarth1')}`;
+  }
+
+  function _updateBasemapReadonlyPanel(zoomK = null) {
+    const base = layers.find(l => l.type === LAYER_TYPES.BASEMAP);
+    if (!base) return;
+    const s = base.style || {};
+    const mode = s.baseMode || 'globe';
+    const source = s.geographicSourceType || 'raster';
+    const k = Number.isFinite(zoomK) ? zoomK : (renderer.getZoomTransform?.()?.k || 1);
+    const centerLon = Number(s.center?.[0] || 0);
+    const centerLat = Number(s.center?.[1] || 0);
+
+    const modeChoices = $('bm-ro-mode-choices');
+    const sourceChoices = $('bm-ro-source-choices');
+    const modeEl = $('bm-ro-mode');
+    const sourceEl = $('bm-ro-source');
+    const zoomEl = $('bm-ro-zoom');
+    const centerEl = $('bm-ro-center');
+    const detailEl = $('bm-ro-detail');
+
+    if (modeChoices) {
+      modeChoices.innerHTML = `
+        <span class="sx-choice-pills">
+          <span class="sx-choice-pill ${mode === 'globe' ? 'active' : ''}">Globe</span>
+          <span class="sx-choice-pill ${mode === 'geographic' ? 'active' : ''}">Natural Earth Geographic</span>
+        </span>`;
+    }
+    if (sourceChoices) {
+      sourceChoices.innerHTML = `
+        <span class="sx-choice-pills">
+          <span class="sx-choice-pill ${source === 'raster' ? 'active' : ''}">Raster</span>
+          <span class="sx-choice-pill ${source === 'vector' ? 'active' : ''}">Vector</span>
+        </span>`;
+    }
+    if (modeEl) modeEl.textContent = mode === 'geographic' ? 'Natural Earth Geographic (WGS84)' : `Globe (${_projectionLabel(s.projection || 'geoNaturalEarth1')})`;
+    if (sourceEl) sourceEl.textContent = mode === 'geographic' ? (source === 'vector' ? 'Natural Earth Vector' : 'Natural Earth Raster') : 'Projection Vector';
+    if (zoomEl) zoomEl.textContent = k.toFixed(2);
+    if (centerEl) centerEl.textContent = _formatLatLon(centerLat, centerLon);
+    if (detailEl) detailEl.textContent = _currentBasemapDetailLabel(k);
+  }
+
+  function _syncBasemapLayoutLockUI(layer) {
+    const sec = $('settings-basemap');
+    if (!sec) return;
+    const note = $('settings-basemap-layout-note');
+    const readOnlyPanel = $('settings-basemap-readonly');
+    const isBasemap = layer?.type === LAYER_TYPES.BASEMAP;
+    const readOnly = isBasemap && !_layoutMode;
+
+    if (note) note.style.display = readOnly ? '' : 'none';
+    if (readOnlyPanel) readOnlyPanel.style.display = readOnly ? '' : 'none';
+
+    for (const child of sec.children) {
+      if (child.id === 'settings-basemap-layout-note') continue;
+      if (child.id === 'settings-basemap-readonly') continue;
+      if (child.tagName === 'H3') continue;
+      if (readOnly) child.style.display = 'none';
+      else child.style.display = '';
+    }
+
+    if (!readOnly) _syncBasemapModeUI();
+
+    if (readOnly) _updateBasemapReadonlyPanel();
+  }
+
   function _showSettingsForLayer(id) {
     const layer = layers.find(l => l.id === id);
     // Hide all type sections
@@ -562,12 +665,17 @@ export async function app(opts = {}) {
     $('setting-layer-name').value = layer.name;
     $('setting-layer-opacity').value = layer.opacity;
 
+    const basemapReadOnly = layer.type === LAYER_TYPES.BASEMAP && !_layoutMode;
+    $('settings-common').style.display = basemapReadOnly ? 'none' : '';
+
     // Show type-specific section and populate
     const secId = 'settings-' + layer.type;
     const sec = $(secId);
     if (sec) sec.style.display = '';
 
     _populateSettings(layer);
+    _syncBasemapLayoutLockUI(layer);
+    if (layer.type === LAYER_TYPES.BASEMAP) _updateBasemapReadonlyPanel();
   }
 
   function _populateSettings(layer) {
@@ -668,6 +776,7 @@ export async function app(opts = {}) {
     const s = layer.style;
     switch (layer.type) {
       case LAYER_TYPES.BASEMAP:
+        if (!_layoutMode) return;
         s.baseMode                 = $('set-bm-mode')?.value || 'globe';
         s.projection               = $('set-bm-projection')?.value;
         s.backgroundFill           = $('set-bm-bg')?.value;
@@ -881,10 +990,10 @@ export async function app(opts = {}) {
     if (_layoutMode) return;
     _layoutMode = true;
 
-    // Save and hide all non-basemap layers (frame stays visible for reference)
+    // Save and hide all non-basemap layers while editing basemap layout.
     _preLayoutVisibilities = {};
     for (const layer of layers) {
-      if (layer.type !== LAYER_TYPES.BASEMAP && layer.type !== LAYER_TYPES.FRAME) {
+      if (layer.type !== LAYER_TYPES.BASEMAP) {
         _preLayoutVisibilities[layer.id] = layer.visible;
         layer.visible = false;
       }
@@ -917,7 +1026,7 @@ export async function app(opts = {}) {
     if (!_layoutMode) return;
     _layoutMode = false;
 
-    // Restore layer visibilities
+    // Restore layer visibilities that were captured on layout entry.
     for (const layer of layers) {
       if (_preLayoutVisibilities[layer.id] !== undefined) {
         layer.visible = _preLayoutVisibilities[layer.id];
@@ -933,6 +1042,7 @@ export async function app(opts = {}) {
     $('btn-layout-mode')?.classList.remove('active');
 
     _renderLayerList();
+    _showSettingsForLayer(selectedId);
     _render();
     _saveState();
   }
@@ -1188,6 +1298,7 @@ export async function app(opts = {}) {
   }
 
   function _updateSelectedGeoJSONStatus(zoomK = null) {
+    _updateBasemapReadonlyPanel(zoomK);
     if (!statusStats || _spaceHeld) return;
     const selected = layers.find(l => l.id === selectedId);
     if (!selected || selected.type !== LAYER_TYPES.GEOJSON) {

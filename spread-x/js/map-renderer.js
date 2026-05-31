@@ -369,11 +369,13 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
         let land = null;
         let countryMesh = null;
         if (landTopo) {
-          const landKeys = Object.keys(landTopo.objects);
-          land = _prepareForSeamClipping(topojson.feature(landTopo, landTopo.objects[landKeys[0]]));
+          const landKey = _pickTopoObjectKey(landTopo, ['land']);
+          if (landKey) {
+            land = _prepareForSeamClipping(topojson.feature(landTopo, landTopo.objects[landKey]));
+          }
         }
         if (countriesTopo) {
-          const countriesKey = Object.keys(countriesTopo.objects)[0];
+          const countriesKey = _pickTopoObjectKey(countriesTopo, ['countries', 'country', 'admin0', 'ne_admin_0_countries']);
           if (countriesKey) {
             countryMesh = _prepareForSeamClipping(
               topojson.mesh(countriesTopo, countriesTopo.objects[countriesKey], (a, b) => a !== b)
@@ -391,6 +393,7 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
             .attr('class', 'land')
             .datum(land)
             .attr('d', _path)
+            .attr('fill-rule', 'evenodd')
             .attr('fill', landFill)
             .attr('stroke', 'none');
         }
@@ -459,14 +462,14 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
       const vectorScale = _normalizeScale(s.geographicVectorScale, '50m');
       const landTopo = await _fetchOutline(`ne-land-${vectorScale}`);
       if (landTopo) {
-        const keys = Object.keys(landTopo.objects || {});
-        const key = keys[0];
+        const key = _pickTopoObjectKey(landTopo, ['land']);
         if (key) {
           const land = _prepareForSeamClipping(topojson.feature(landTopo, landTopo.objects[key]));
           g.append('path')
             .attr('class', 'ne-land')
             .datum(land)
             .attr('d', _path)
+            .attr('fill-rule', 'evenodd')
             .attr('fill', s.geographicLandFill || '#9aa876')
             .attr('stroke', 'none');
         }
@@ -482,7 +485,7 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
     const scale = _normalizeScale(style.geographicCountryScale || style.geographicVectorScale, '50m');
     const countryTopo = await _fetchOutline(`ne-countries-${scale}`);
     if (!countryTopo) return;
-    const key = Object.keys(countryTopo.objects || {})[0];
+    const key = _pickTopoObjectKey(countryTopo, ['countries', 'country', 'admin0', 'ne_admin_0_countries']);
     if (!key) return;
 
     const mesh = _prepareForSeamClipping(
@@ -717,13 +720,25 @@ export function createMapRenderer({ svgElement, d3, topojson, onZoomChange } = {
   }
 
   function _prepareForSeamClipping(geometry) {
-    if (!_isProjectionDiscontinuous(_projId)) return geometry;
+    const needsStitch = _isProjectionDiscontinuous(_projId) || _projId === 'geoEquirectangular';
+    if (!needsStitch) return geometry;
     if (!geometry || typeof d3.geoStitch !== 'function') return geometry;
     try {
       return d3.geoStitch(geometry);
     } catch {
       return geometry;
     }
+  }
+
+  function _pickTopoObjectKey(topology, preferredNames = []) {
+    const objects = topology?.objects || {};
+    const keys = Object.keys(objects);
+    if (!keys.length) return null;
+    const preferred = preferredNames.map(name => String(name).toLowerCase());
+    const direct = keys.find(k => preferred.includes(String(k).toLowerCase()));
+    if (direct) return direct;
+    const fuzzy = keys.find(k => preferred.some(name => String(k).toLowerCase().includes(name)));
+    return fuzzy || keys[0];
   }
 
   function _featureBounds(feature) {

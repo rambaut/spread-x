@@ -346,11 +346,13 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
         let land = null;
         let countryMesh = null;
         if (landTopo) {
-          const keys = Object.keys(landTopo.objects);
-          land = _prepareForSeamClipping(topojson.feature(landTopo, landTopo.objects[keys[0]]));
+          const landKey = _pickTopoObjectKey(landTopo, ['land']);
+          if (landKey) {
+            land = _prepareForSeamClipping(topojson.feature(landTopo, landTopo.objects[landKey]));
+          }
         }
         if (countriesTopo) {
-          const countriesKey = Object.keys(countriesTopo.objects)[0];
+          const countriesKey = _pickTopoObjectKey(countriesTopo, ['countries', 'country', 'admin0', 'ne_admin_0_countries']);
           if (countriesKey) {
             countryMesh = _prepareForSeamClipping(
               topojson.mesh(countriesTopo, countriesTopo.objects[countriesKey], (a, b) => a !== b)
@@ -367,7 +369,7 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
         ctx.beginPath();
         ctxPath(land);
         ctx.fillStyle = landFill;
-        ctx.fill();
+        _fillPathEvenOdd(ctx);
         ctx.restore();
       }
 
@@ -432,14 +434,14 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
       const scale = _normalizeScale(style.geographicVectorScale, '50m');
       const landTopo = await _fetchOutline(`ne-land-${scale}`);
       if (landTopo) {
-        const key = Object.keys(landTopo.objects || {})[0];
+        const key = _pickTopoObjectKey(landTopo, ['land']);
         if (key) {
           const land = _prepareForSeamClipping(topojson.feature(landTopo, landTopo.objects[key]));
           ctx.save();
           ctx.beginPath();
           ctxPath(land);
           ctx.fillStyle = style.geographicLandFill || '#9aa876';
-          ctx.fill();
+          _fillPathEvenOdd(ctx);
           ctx.restore();
         }
       }
@@ -449,7 +451,7 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
       const scale = _normalizeScale(style.geographicCountryScale || style.geographicVectorScale, '50m');
       const countriesTopo = await _fetchOutline(`ne-countries-${scale}`);
       if (countriesTopo) {
-        const key = Object.keys(countriesTopo.objects || {})[0];
+        const key = _pickTopoObjectKey(countriesTopo, ['countries', 'country', 'admin0', 'ne_admin_0_countries']);
         if (key) {
           const mesh = _prepareForSeamClipping(
             topojson.mesh(countriesTopo, countriesTopo.objects[key], (a, b) => a !== b)
@@ -688,6 +690,14 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
     return promise;
   }
 
+  function _fillPathEvenOdd(ctx) {
+    try {
+      ctx.fill('evenodd');
+    } catch {
+      ctx.fill();
+    }
+  }
+
   function _fetchOutline(outlineId) {
     if (_topoCache[outlineId]) return _topoCache[outlineId];
     const src = MAP_OUTLINES.find(o => o.id === outlineId);
@@ -698,9 +708,21 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
   }
 
   function _prepareForSeamClipping(geometry) {
-    if (!_isProjectionDiscontinuous(_projId)) return geometry;
+    const needsStitch = _isProjectionDiscontinuous(_projId) || _projId === 'geoEquirectangular';
+    if (!needsStitch) return geometry;
     if (!geometry || typeof d3.geoStitch !== 'function') return geometry;
     try { return d3.geoStitch(geometry); } catch { return geometry; }
+  }
+
+  function _pickTopoObjectKey(topology, preferredNames = []) {
+    const objects = topology?.objects || {};
+    const keys = Object.keys(objects);
+    if (!keys.length) return null;
+    const preferred = preferredNames.map(name => String(name).toLowerCase());
+    const direct = keys.find(k => preferred.includes(String(k).toLowerCase()));
+    if (direct) return direct;
+    const fuzzy = keys.find(k => preferred.some(name => String(k).toLowerCase().includes(name)));
+    return fuzzy || keys[0];
   }
 
   function _featureBounds(feature) {
