@@ -9,6 +9,7 @@ export function createMapRendererCore({
   getLayers,
   onZoomChange,
   shouldForceCanvas,
+  shouldForceSvg,
   getCanvasToSvgThreshold,
   canvasToSvgThreshold = CANVAS_TO_SVG_THRESHOLD,
 } = {}) {
@@ -47,6 +48,10 @@ export function createMapRendererCore({
     topojson,
     onZoomChange: transform => {
       onZoomChange?.(transform);
+      if (shouldForceSvg?.()) {
+        _switchToSvg(transform);
+        return;
+      }
       if (_shouldForceSvgForGeoJSON()) {
         _switchToSvg(transform);
         return;
@@ -62,6 +67,7 @@ export function createMapRendererCore({
     topojson,
     onZoomChange: transform => {
       onZoomChange?.(transform);
+      if (shouldForceSvg?.()) return;
       if (_shouldForceSvgForGeoJSON()) return;
       if (shouldForceCanvas?.()) {
         _switchToCanvas(transform);
@@ -73,6 +79,10 @@ export function createMapRendererCore({
 
   function _reconcileRendererMode() {
     const transform = (_usingCanvas ? canvasRenderer : svgRenderer).getZoomTransform?.() || d3.zoomIdentity;
+    if (shouldForceSvg?.()) {
+      _switchToSvg(transform);
+      return;
+    }
     if (_shouldForceSvgForGeoJSON()) {
       _switchToSvg(transform);
       return;

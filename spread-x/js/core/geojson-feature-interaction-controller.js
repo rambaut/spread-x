@@ -59,12 +59,20 @@ export function createGeojsonFeatureInteractionController({
     const cache = await getFeatureCache?.(getActiveFeatureScale?.());
     if (!cache?.features?.length) return null;
 
+    let best = null;
+    let bestArea = Infinity;
+
     for (const [idx, feature] of cache.features.entries()) {
       try {
-        if (d3.geoContains(feature, lonLat)) {
+        const area = d3.geoArea(feature);
+        // Exclude malformed/complement polygons that can cover most of the globe.
+        if (!Number.isFinite(area) || area <= 0 || area > (Math.PI * 1.5)) continue;
+
+        if (d3.geoContains(feature, lonLat) && area < bestArea) {
           const id = getFeatureId?.(feature, idx);
-          if (!id) return null;
-          return {
+          if (!id) continue;
+          bestArea = area;
+          best = {
             id,
             name: cache.nameById?.get?.(id) || getFeatureName?.(feature, idx) || '',
           };
@@ -74,7 +82,7 @@ export function createGeojsonFeatureInteractionController({
       }
     }
 
-    return null;
+    return best;
   }
 
   async function zoomToSelectedFeatures() {

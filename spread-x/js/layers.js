@@ -130,7 +130,7 @@ const DEFAULT_STYLES = {
     minSimplify: 1,
     maxSimplify: 4,
     detailZoom:  8,
-    debugPerfStatus: true,
+    debugPerfStatus: false,
   },
   points: {
     radius:      4,

@@ -213,6 +213,17 @@ export async function app(opts = {}) {
     ).trim();
   }
 
+  function _isCountryFeatureHitTestable(feature) {
+    try {
+      const area = d3.geoArea(feature);
+      // Guard against malformed/complement polygons that effectively cover
+      // most of the globe and cause ocean hover false positives.
+      return Number.isFinite(area) && area > 0 && area <= (Math.PI * 1.5);
+    } catch {
+      return false;
+    }
+  }
+
   async function _getCountryFeatureCache(scale) {
     const key = _normalizeScale(scale, '50m');
     if (_countryFeaturesCache.has(key)) return _countryFeaturesCache.get(key);
@@ -235,6 +246,7 @@ export async function app(opts = {}) {
       const byId = new Map();
       const nameById = new Map();
       for (const f of features) {
+        if (!_isCountryFeatureHitTestable(f)) continue;
         const id = _countryFeatureId(f);
         if (!id) continue;
         byId.set(id, f);
@@ -271,8 +283,13 @@ export async function app(opts = {}) {
     if (base) {
       base.runtime = base.runtime || {};
       base.runtime.showBasemapCountryPolygons = _layoutMode;
-      delete base.runtime.hoveredFeatureId;
-      delete base.runtime.selectedFeatureIds;
+      if (_layoutMode) {
+        base.runtime.hoveredFeatureId = hoveredId;
+        base.runtime.selectedFeatureIds = selectedIds;
+      } else {
+        delete base.runtime.hoveredFeatureId;
+        delete base.runtime.selectedFeatureIds;
+      }
     }
   }
 
@@ -290,6 +307,15 @@ export async function app(opts = {}) {
   }
 
   function _isCountryHoverEnabled() {
+    if (_layoutMode) {
+      const base = _activeBasemapLayer();
+      if (!base || base.visible === false) return false;
+      const s = base.style || {};
+      if ((s.baseMode || 'globe') === 'geographic') {
+        return s.geographicShowCountries !== false;
+      }
+      return s.showCountryBoundaries !== false;
+    }
     const layer = _activeGeojsonFeatureLayer();
     return !!(layer && layer.visible !== false);
   }
@@ -367,7 +393,8 @@ export async function app(opts = {}) {
       _updateSelectedGeoJSONStatus(effective.k);
       _recordZoomTransform(effective);
     },
-    shouldForceCanvas: () => false,
+    shouldForceCanvas: () => _layoutMode,
+    shouldForceSvg: () => false,
     getCanvasToSvgThreshold: () => _getCanvasToSvgSwitchZoom(),
   });
 
@@ -491,7 +518,10 @@ export async function app(opts = {}) {
     const candidate = d3.zoomIdentity
       .translate(newCenter.x - (projectedAfter[0] * k), newCenter.y - (projectedAfter[1] * k))
       .scale(k);
-    const corrected = _constrainViewModeTransform(candidate);
+    // During resize, the existing view constraint is based on the pre-resize
+    // viewport/frame. Clamping against that stale constraint can produce large
+    // jumps. Apply the preserved transform first, then rebuild constraint base.
+    const corrected = candidate;
 
     mapViewport.withSuppressedHistory(() => {
       renderer.syncZoomTransform(corrected);
@@ -1118,10 +1148,16 @@ export async function app(opts = {}) {
     statusStats,
     computeFrameRect,
     getFrameStyle: () => layers.find(l => l.type === LAYER_TYPES.FRAME)?.style,
-    getActiveFeatureScale: () => selectedId,
-    getFeatureCache: () => _getSelectedGeojsonFeatureCache(),
-    getFeatureId: (feature, index) => _geojsonFeatureId(feature, index),
-    getFeatureName: (feature, index) => _geojsonFeatureName(feature, index),
+    getActiveFeatureScale: () => (_layoutMode ? _activeCountryScale() : selectedId),
+    getFeatureCache: () => (_layoutMode
+      ? _getCountryFeatureCache(_activeCountryScale())
+      : _getSelectedGeojsonFeatureCache()),
+    getFeatureId: (feature, index) => (_layoutMode
+      ? _countryFeatureId(feature)
+      : _geojsonFeatureId(feature, index)),
+    getFeatureName: (feature, index) => (_layoutMode
+      ? _countryFeatureName(feature)
+      : _geojsonFeatureName(feature, index)),
     isFeatureHoverEnabled: () => _isCountryHoverEnabled(),
     constrainViewModeTransform: transform => _constrainViewModeTransform(transform),
     recordZoomTransform: (transform, opts) => _recordZoomTransform(transform, opts),

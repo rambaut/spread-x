@@ -8,6 +8,8 @@ const _geometryPathCache = new WeakMap();
 const _boundaryMeshCache = new WeakMap();
 const _geoVectorLandPathCache = new Map();
 const _geoVectorCountryMeshPathCache = new Map();
+const BOUNDARY_LAYER_NAMES = new Set(['countries', 'admin0', 'admin1', 'admin2']);
+const OCEAN_LAYER_NAMES = new Set(['oceans', 'oceanmask']);
 const PART_MIN_SCREEN_WIDTH_PX = 1.5;
 const PART_MIN_SCREEN_HEIGHT_PX = 1.5;
 const PART_MIN_SCREEN_AREA_PX2 = 4;
@@ -281,7 +283,7 @@ function _filterFeatureToVisibleGeometry(feature, {
       : intersectsViewportAfterTransform(bounds, transform, frameRect);
     if (!isVisible) continue;
 
-    // Drop tiny projected fragments that appear as grey dot artifacts.
+    // Skip tiny projected fragments to avoid rendering micro-artifacts.
     const projectedW = Math.abs((bounds[1][0] - bounds[0][0]) * k);
     const projectedH = Math.abs((bounds[1][1] - bounds[0][1]) * k);
     const projectedArea = projectedW * projectedH;
@@ -675,9 +677,9 @@ export function renderSvgGeoJsonLayer({
   const perfStart = perfNow();
 
   const s = layer.style || {};
-  const normalizedName = String(layer?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const isBoundaryLayer = normalizedName === 'countries' || normalizedName === 'admin0' || normalizedName === 'admin1' || normalizedName === 'admin2';
-  const isOceansLayer = normalizedName === 'oceans' || normalizedName === 'oceanmask';
+  const normalizedLayerName = String(layer?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const isBoundaryLayer = BOUNDARY_LAYER_NAMES.has(normalizedLayerName);
+  const isOceansLayer = OCEAN_LAYER_NAMES.has(normalizedLayerName);
   const layerFill = isBoundaryLayer ? 'none' : s.fill;
   const layerFillOpacity = isBoundaryLayer ? 0 : s.fillOpacity;
   const layerStrokeLinecap = isBoundaryLayer ? 'butt' : 'round';
