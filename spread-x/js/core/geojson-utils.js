@@ -81,23 +81,16 @@ export function geojsonRenderPolicy(featureCount, style = {}) {
       Number(style.minZoom) || GEOJSON_LIMITS.renderPolicy.minZoomMin
     )
   );
-  const maxVisibleFeatures = Math.max(
-    GEOJSON_LIMITS.renderPolicy.maxVisibleMin,
-    Math.min(
-      GEOJSON_LIMITS.renderPolicy.maxVisibleMax,
-      Math.round(Number(style.maxVisible) || GEOJSON_LIMITS.renderPolicy.maxVisibleDefault)
-    )
-  );
-  return { minZoom, maxVisibleFeatures };
+  return { minZoom };
 }
 
 export function autoGeojsonRenderPolicy(featureCount) {
-  if (featureCount > 8000) return { minZoom: 5, maxVisibleFeatures: 900 };
-  if (featureCount > 4000) return { minZoom: 4, maxVisibleFeatures: 1200 };
-  if (featureCount > 2000) return { minZoom: 3, maxVisibleFeatures: 1600 };
-  if (featureCount > 800) return { minZoom: 2, maxVisibleFeatures: 2000 };
-  if (featureCount > 300) return { minZoom: 1.5, maxVisibleFeatures: 2600 };
-  return { minZoom: 1, maxVisibleFeatures: 4000 };
+  if (featureCount > 8000) return { minZoom: 5 };
+  if (featureCount > 4000) return { minZoom: 4 };
+  if (featureCount > 2000) return { minZoom: 3 };
+  if (featureCount > 800) return { minZoom: 2 };
+  if (featureCount > 300) return { minZoom: 1.5 };
+  return { minZoom: 1 };
 }
 
 export function simplifyGeoJSON(data, simplifyLevel) {

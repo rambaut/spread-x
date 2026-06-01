@@ -742,9 +742,7 @@ export function renderSvgGeoJsonLayer({
       zoomScale: zoomT.k,
       simplifyLevel,
       minZoom: policy.minZoom,
-      maxVisibleFeatures: policy.maxVisibleFeatures,
       hiddenByZoom: true,
-      capped: false,
       renderedVertexCount: 0,
       timingsMs: {
         prep: Math.max(0, perfAfterPrep - perfStart),
@@ -783,9 +781,7 @@ export function renderSvgGeoJsonLayer({
       zoomScale: zoomT.k,
       simplifyLevel: effectiveSimplifyLevel,
       minZoom: policy.minZoom,
-      maxVisibleFeatures: policy.maxVisibleFeatures,
       hiddenByZoom: false,
-      capped: false,
       partCullChecked: 0,
       partCullApplied: 0,
       renderedVertexCount: _countFeatureVerticesCached(oceanFeature),
@@ -881,9 +877,7 @@ export function renderSvgGeoJsonLayer({
         zoomScale: zoomT.k,
         simplifyLevel: effectiveSimplifyLevel,
         minZoom: policy.minZoom,
-        maxVisibleFeatures: policy.maxVisibleFeatures,
         hiddenByZoom: false,
-        capped: false,
         partCullChecked: 0,
         partCullApplied: 0,
         renderedVertexCount: _countGeometryVertices(boundaryMesh),
@@ -904,7 +898,6 @@ export function renderSvgGeoJsonLayer({
   const features = [];
   let renderedVertexCount = 0;
   let inViewFeatures = 0;
-  let capped = false;
   let partCullChecked = 0;
   let partCullApplied = 0;
   const perfCullStart = perfNow();
@@ -945,10 +938,6 @@ export function renderSvgGeoJsonLayer({
     renderedVertexCount += (filteredFeature === feature)
       ? rawVertexCount
       : _countFeatureVertices(filteredFeature);
-    if (features.length >= policy.maxVisibleFeatures) {
-      capped = true;
-      break;
-    }
   }
   const perfAfterCull = perfNow();
 
@@ -1025,9 +1014,7 @@ export function renderSvgGeoJsonLayer({
     zoomScale: zoomT.k,
     simplifyLevel: effectiveSimplifyLevel,
     minZoom: policy.minZoom,
-    maxVisibleFeatures: policy.maxVisibleFeatures,
     hiddenByZoom: false,
-    capped,
     partCullChecked,
     partCullApplied,
     renderedVertexCount,

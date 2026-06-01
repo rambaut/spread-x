@@ -166,14 +166,12 @@ export function syncGeojsonAutoButtonUI({ getEl, layer, layerTypes } = {}) {
 export function syncGeoJSONPerfUI({ getEl, layer, autoGeojsonPerfPolicy } = {}) {
   const adaptiveSimplify = getEl?.('set-gj-adaptive-simplify')?.checked !== false;
   const minZoom = getEl?.('set-gj-min-zoom');
-  const maxVisible = getEl?.('set-gj-max-visible');
   const detail = getEl?.('set-gj-simplify');
   const adaptiveToggle = getEl?.('set-gj-adaptive-simplify');
   const adaptiveRow = adaptiveToggle?.closest('.sx-setting-row');
   const presetLinked = Array.isArray(layer?.style?.detailLevels) && layer.style.detailLevels.length > 0;
 
   if (minZoom) minZoom.disabled = false;
-  if (maxVisible) maxVisible.disabled = false;
   if (adaptiveRow) adaptiveRow.style.display = presetLinked ? '' : 'none';
   if (adaptiveToggle) adaptiveToggle.disabled = !presetLinked;
   if (detail) detail.disabled = presetLinked && adaptiveSimplify;
@@ -260,7 +258,6 @@ export function populateSettingsForLayer({
       getEl('set-gj-stroke').value = s.stroke;
       getEl('set-gj-sw').value = s.strokeWidth;
       if (getEl('set-gj-min-zoom')) getEl('set-gj-min-zoom').value = Number.isFinite(+s.minZoom) ? +s.minZoom : GEOJSON_LIMITS.renderPolicy.minZoomDefault;
-      if (getEl('set-gj-max-visible')) getEl('set-gj-max-visible').value = Number.isFinite(+s.maxVisible) ? +s.maxVisible : GEOJSON_LIMITS.renderPolicy.maxVisibleDefault;
       {
         const detailControl = getEl('set-gj-simplify');
         const detailReadout = getEl('set-gj-simplify-readout');
@@ -410,7 +407,6 @@ export function readSettingsFromLayerUI({
       s.strokeWidth = +getEl('set-gj-sw')?.value;
       s.autoPerf = false;
       if (getEl('set-gj-min-zoom')) s.minZoom = +getEl('set-gj-min-zoom')?.value;
-      if (getEl('set-gj-max-visible')) s.maxVisible = +getEl('set-gj-max-visible')?.value;
       const presetLinked = Array.isArray(s.detailLevels) && s.detailLevels.length > 0;
       const detailOption = _selectedGeojsonDetailOption(getEl('set-gj-simplify'));
       if (presetLinked) {

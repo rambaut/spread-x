@@ -712,13 +712,6 @@ export async function app(opts = {}) {
       if (!Number.isFinite(Number(minZoom.value))) minZoom.value = String(GEOJSON_LIMITS.renderPolicy.minZoomDefault);
     }
 
-    const maxVisible = $('set-gj-max-visible');
-    if (maxVisible) {
-      maxVisible.min = String(GEOJSON_LIMITS.renderPolicy.maxVisibleMin);
-      maxVisible.max = String(GEOJSON_LIMITS.renderPolicy.maxVisibleMax);
-      if (!Number.isFinite(Number(maxVisible.value))) maxVisible.value = String(GEOJSON_LIMITS.renderPolicy.maxVisibleDefault);
-    }
-
     const detail = $('set-gj-simplify');
     if (detail) {
       detail.min = '0';
@@ -1891,7 +1884,6 @@ export async function app(opts = {}) {
     if (!policy) return;
 
     if ($('set-gj-min-zoom')) $('set-gj-min-zoom').value = String(policy.minZoom);
-    if ($('set-gj-max-visible')) $('set-gj-max-visible').value = String(policy.maxVisibleFeatures);
 
     readSettingsFromLayerUI({
       layer,
@@ -2218,9 +2210,7 @@ export async function app(opts = {}) {
       renderedVertexCount: Number.isFinite(+stats?.renderedVertexCount) ? +stats.renderedVertexCount : null,
       partCullChecked: Number.isFinite(+stats?.partCullChecked) ? +stats.partCullChecked : null,
       partCullApplied: Number.isFinite(+stats?.partCullApplied) ? +stats.partCullApplied : null,
-      capped: !!stats?.capped,
       hiddenByZoom: !!stats?.hiddenByZoom,
-      maxVisibleFeatures: Number.isFinite(+stats?.maxVisibleFeatures) ? +stats.maxVisibleFeatures : null,
       minZoom: Number.isFinite(+stats?.minZoom) ? +stats.minZoom : null,
       rendererFrameMs: Math.round(_lastRenderDurationMs * 100) / 100,
       prepMs: Number.isFinite(+timings.prep) ? +(Math.round(timings.prep * 100) / 100) : null,

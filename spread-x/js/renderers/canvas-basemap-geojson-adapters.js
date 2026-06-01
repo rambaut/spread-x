@@ -420,9 +420,7 @@ export function drawCanvasGeoJsonLayer({
       zoomScale: zoomK,
       simplifyLevel,
       minZoom: policy.minZoom,
-      maxVisibleFeatures: policy.maxVisibleFeatures,
       hiddenByZoom: true,
-      capped: false,
       renderedVertexCount: 0,
       timingsMs: {
         prep: Math.max(0, perfAfterPrep - perfStart),
@@ -438,7 +436,6 @@ export function drawCanvasGeoJsonLayer({
   const features = [];
   let renderedVertexCount = 0;
   let inViewFeatures = 0;
-  let capped = false;
   const perfCullStart = perfNow();
   for (const feature of allFeatures) {
     const b = featureBounds(feature);
@@ -447,10 +444,6 @@ export function drawCanvasGeoJsonLayer({
     inViewFeatures += 1;
     features.push(feature);
     renderedVertexCount += _countFeatureVertices(feature);
-    if (features.length >= policy.maxVisibleFeatures) {
-      capped = true;
-      break;
-    }
   }
   const perfAfterCull = perfNow();
 
@@ -537,9 +530,7 @@ export function drawCanvasGeoJsonLayer({
     zoomScale: zoomK,
     simplifyLevel,
     minZoom: policy.minZoom,
-    maxVisibleFeatures: policy.maxVisibleFeatures,
     hiddenByZoom: false,
-    capped,
     renderedVertexCount,
     boundaryDebug: isBoundaryLayer ? {
       renderer: 'canvas',

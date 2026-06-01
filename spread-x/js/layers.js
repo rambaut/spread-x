@@ -127,7 +127,6 @@ const DEFAULT_STYLES = {
     featureSelectStrokeWidth: 1,
     autoPerf:    false,
     minZoom:     GEOJSON_LIMITS.renderPolicy.minZoomDefault,
-    maxVisible:  GEOJSON_LIMITS.renderPolicy.maxVisibleDefault,
     adaptiveSimplify: true,
     simplify:    GEOJSON_LIMITS.simplifyLevel.defaultValue,
     minSimplify: GEOJSON_LIMITS.simplifyLevel.defaultValue,

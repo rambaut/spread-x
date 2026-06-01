@@ -466,9 +466,9 @@ function _buildSettingsPanel() {
       </div>
     </div>
 
-    <!-- ── GeoJSON ── -->
+    <!-- ── Style ── -->
     <div id="settings-geojson" class="sx-settings-section" style="display:none">
-      <h3><i class="bi bi-hexagon"></i> GeoJSON</h3>
+      <h3><i class="bi bi-hexagon"></i> Style</h3>
       <div class="sx-setting-row">
         <label for="set-gj-fill">Fill</label>
         <input type="color" id="set-gj-fill" class="pt-palette-color" value="#2aa198" />
@@ -490,10 +490,6 @@ function _buildSettingsPanel() {
       <div class="sx-setting-row">
         <label for="set-gj-min-zoom">Min zoom to render</label>
         <input type="range" id="set-gj-min-zoom" class="form-range" min="1" max="12" step="0.25" value="2" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-gj-max-visible">Max visible features</label>
-        <input type="range" id="set-gj-max-visible" class="form-range" min="100" max="20000" step="100" value="2000" />
       </div>
       <div class="sx-setting-row">
         <label for="set-gj-simplify">Detail</label>

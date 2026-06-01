@@ -36,9 +36,6 @@ export const GEOJSON_LIMITS = {
     minZoomMin: 1,
     minZoomMax: 12,
     minZoomDefault: 1,
-    maxVisibleMin: 100,
-    maxVisibleMax: 20000,
-    maxVisibleDefault: 2000,
   },
   adaptiveDetailDebounceMs: 1000,
 };
