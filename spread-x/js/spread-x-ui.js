@@ -288,7 +288,7 @@ function _buildSettingsPanel() {
       </div>
       <div class="sx-setting-row">
         <label for="set-bm-grat-opacity">Reticule opacity</label>
-        <input type="range" id="set-bm-grat-opacity" class="form-range" min="0" max="0.5" step="0.02" value="0.1" />
+        <input type="range" id="set-bm-grat-opacity" class="form-range" min="0" max="100" step="1" value="10" />
       </div>
       <div class="sx-setting-row">
         <label for="set-bm-proj-boundary">Projection boundary</label>

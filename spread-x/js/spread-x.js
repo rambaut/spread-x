@@ -783,7 +783,9 @@ export async function app(opts = {}) {
     for (const layer of listLayers) {
       const isPresetGroup = layer.type === 'preset-group';
       const presetGroup = isPresetGroup ? layer.presetGroup : null;
-      const visLocked = layer.type === LAYER_TYPES.BASEMAP || layer.type === LAYER_TYPES.FRAME || isPresetGroup;
+      const visLocked = layer.type === LAYER_TYPES.FRAME
+        || isPresetGroup
+        || (_layoutMode && layer.type === LAYER_TYPES.BASEMAP);
       const layoutLocked = _layoutMode && layer.type !== LAYER_TYPES.BASEMAP && !isPresetGroup;
       const isPresetFeature = !isPresetGroup && _isPresetFeatureLayer(layer);
       const showConfigButton = layer.type === LAYER_TYPES.BASEMAP || isPresetGroup || isPresetFeature;
@@ -1470,7 +1472,8 @@ export async function app(opts = {}) {
     if (visBtn) {
       const layer = layers.find(l => l.id === visBtn.dataset.vis);
       if (layer) {
-        const visLocked = layer.type === LAYER_TYPES.BASEMAP || layer.type === LAYER_TYPES.FRAME;
+        const visLocked = layer.type === LAYER_TYPES.FRAME
+          || (_layoutMode && layer.type === LAYER_TYPES.BASEMAP);
         const nextVisible = visLocked ? true : !layer.visible;
         const prevVisible = layer.visible;
         layer.visible = nextVisible;

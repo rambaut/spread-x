@@ -137,6 +137,20 @@ export async function drawCanvasBasemapLayer({
   const outlineWidth = (s.projectionBoundaryWidth ?? s.outlineStrokeWidth ?? 1) / k;
   const ctxPath = d3.geoPath(projection, ctx);
 
+  ctx.save();
+  ctx.beginPath();
+  ctxPath({ type: 'Sphere' });
+  if (oceanFill) {
+    ctx.fillStyle = oceanFill;
+    ctx.fill();
+  }
+  ctx.strokeStyle = outlineStroke;
+  ctx.lineWidth = outlineWidth;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.restore();
+
   if (s.showGraticule) {
     const step = s.graticuleStep || 10;
     let gCache = graticuleCache;
@@ -155,20 +169,6 @@ export async function drawCanvasBasemapLayer({
     ctx.stroke();
     ctx.restore();
   }
-
-  ctx.save();
-  ctx.beginPath();
-  ctxPath({ type: 'Sphere' });
-  if (oceanFill) {
-    ctx.fillStyle = oceanFill;
-    ctx.fill();
-  }
-  ctx.strokeStyle = outlineStroke;
-  ctx.lineWidth = outlineWidth;
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-  ctx.stroke();
-  ctx.restore();
 
   const bsrc = s.basemapSource || 'd3';
   const [landId, countriesId] = basemapOutlineIds(bsrc);

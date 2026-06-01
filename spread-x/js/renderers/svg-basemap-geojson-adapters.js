@@ -376,6 +376,17 @@ export async function renderSvgBasemapLayer({
   const landBoundaryStroke = s.landBoundaryStroke || s.landStroke || '#4a8a5a';
   const landBoundaryWidth = s.landBoundaryWidth ?? s.landStrokeWidth ?? 0.5;
 
+  g.append('path')
+    .attr('class', 'basemap-sphere')
+    .datum({ type: 'Sphere' })
+    .attr('d', path)
+    .attr('fill', oceanFill)
+    .attr('stroke', s.projectionBoundaryStroke || s.outlineStroke || '#4a8a5a')
+    .attr('stroke-width', s.projectionBoundaryWidth ?? s.outlineStrokeWidth ?? 1)
+    .attr('vector-effect', 'non-scaling-stroke')
+    .attr('stroke-linejoin', 'round')
+    .attr('stroke-linecap', 'round');
+
   if (s.showGraticule) {
     const step = s.graticuleStep || 10;
     g.append('path')
@@ -389,17 +400,6 @@ export async function renderSvgBasemapLayer({
       .attr('stroke-linecap', 'round')
       .attr('opacity', s.graticuleOpacity ?? 0.1);
   }
-
-  g.append('path')
-    .attr('class', 'basemap-sphere')
-    .datum({ type: 'Sphere' })
-    .attr('d', path)
-    .attr('fill', oceanFill)
-    .attr('stroke', s.projectionBoundaryStroke || s.outlineStroke || '#4a8a5a')
-    .attr('stroke-width', s.projectionBoundaryWidth ?? s.outlineStrokeWidth ?? 1)
-    .attr('vector-effect', 'non-scaling-stroke')
-    .attr('stroke-linejoin', 'round')
-    .attr('stroke-linecap', 'round');
 
   const bsrc = s.basemapSource || 'd3';
   const [landId, countriesId] = basemapOutlineIds(bsrc);

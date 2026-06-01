@@ -7,6 +7,23 @@ function _clampSimplifyLevel(value) {
   );
 }
 
+function _clampPercent(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.max(0, Math.min(100, num));
+}
+
+function _opacityToPercent(opacityValue) {
+  const opacity = Number(opacityValue);
+  if (!Number.isFinite(opacity)) return 10;
+  if (opacity > 1) return _clampPercent(opacity);
+  return _clampPercent(opacity * 100);
+}
+
+function _percentToOpacity(percentValue) {
+  return _clampPercent(percentValue) / 100;
+}
+
 function _clampDetailPercent(value) {
   return Math.max(
     GEOJSON_LIMITS.detailPercent.min,
@@ -209,7 +226,7 @@ export function populateSettingsForLayer({
       getEl('set-bm-grat').checked = s.showGraticule !== false;
       getEl('set-bm-grat-step').value = s.graticuleStep ?? 10;
       getEl('set-bm-grat-stroke').value = s.graticuleStroke || '#ffffff';
-      getEl('set-bm-grat-opacity').value = s.graticuleOpacity ?? 0.1;
+      getEl('set-bm-grat-opacity').value = _opacityToPercent(s.graticuleOpacity ?? 0.1);
       getEl('set-bm-proj-boundary').value = s.projectionBoundaryStroke || '#4a8a5a';
       getEl('set-bm-proj-boundary-sw').value = s.projectionBoundaryWidth ?? 1;
       getEl('set-bm-globe-on').checked = s.showGlobe !== false;
@@ -345,7 +362,7 @@ export function readSettingsFromLayerUI({
       s.showGraticule = getEl('set-bm-grat')?.checked;
       s.graticuleStep = +getEl('set-bm-grat-step')?.value;
       s.graticuleStroke = getEl('set-bm-grat-stroke')?.value;
-      s.graticuleOpacity = +getEl('set-bm-grat-opacity')?.value;
+      s.graticuleOpacity = _percentToOpacity(getEl('set-bm-grat-opacity')?.value);
       s.projectionBoundaryStroke = getEl('set-bm-proj-boundary')?.value;
       s.projectionBoundaryWidth = +getEl('set-bm-proj-boundary-sw')?.value;
       s.showGlobe = getEl('set-bm-globe-on')?.checked;
