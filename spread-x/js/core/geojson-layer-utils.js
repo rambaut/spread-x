@@ -288,6 +288,13 @@ export function resolveGeojsonSimplifyLevel({ zoomScale = 1, featureCount = 0, s
     : [];
 
   if (scheduledDetailLevels.length) {
+    if (style.adaptiveSimplify === false) {
+      const requested = _clampSimplifyLevel(style.simplify ?? scheduledDetailLevels[0].level);
+      const nearest = scheduledDetailLevels.reduce((best, level) => (
+        Math.abs(level.level - requested) < Math.abs(best.level - requested) ? level : best
+      ), scheduledDetailLevels[0]);
+      return _clampSimplifyLevel(nearest.level);
+    }
     const zoom = Math.max(1, Number(zoomScale) || 1);
     let selectedLevel = scheduledDetailLevels[0].level;
     for (const level of scheduledDetailLevels) {
@@ -359,25 +366,32 @@ export function autoGeojsonRenderPolicy(featureCount) {
 export function simplifyGeoJSON(data, simplifyLevel) {
   if (!data || simplifyLevel <= 0) return data;
   if (data.type === 'FeatureCollection') {
+    const features = (data.features || [])
+      .map(f => simplifyFeature(f, simplifyLevel))
+      .filter(Boolean);
     return {
       ...data,
-      features: (data.features || []).map(f => simplifyFeature(f, simplifyLevel)),
+      features,
     };
   }
   if (data.type === 'Feature') return simplifyFeature(data, simplifyLevel);
+  const coordinates = simplifyGeometryCoordinates(data.type, data.coordinates, simplifyLevel);
+  if (coordinates == null) return null;
   return {
     type: data.type,
-    coordinates: simplifyGeometryCoordinates(data.type, data.coordinates, simplifyLevel),
+    coordinates,
   };
 }
 
 export function simplifyFeature(feature, simplifyLevel) {
   if (!feature?.geometry) return feature;
+  const coordinates = simplifyGeometryCoordinates(feature.geometry.type, feature.geometry.coordinates, simplifyLevel);
+  if (coordinates == null) return null;
   return {
     ...feature,
     geometry: {
       ...feature.geometry,
-      coordinates: simplifyGeometryCoordinates(feature.geometry.type, feature.geometry.coordinates, simplifyLevel),
+      coordinates,
     },
   };
 }
@@ -390,11 +404,19 @@ export function simplifyGeometryCoordinates(type, coordinates, simplifyLevel) {
     case 'LineString':
       return decimateLine(coordinates, stride, false);
     case 'MultiLineString':
-      return coordinates.map(line => decimateLine(line, stride, false));
-    case 'Polygon':
-      return coordinates.map(ring => decimateLine(ring, stride, true));
-    case 'MultiPolygon':
-      return coordinates.map(poly => poly.map(ring => decimateLine(ring, stride, true)));
+      return coordinates
+        .map(line => decimateLine(line, stride, false))
+        .filter(line => Array.isArray(line) && line.length >= 2);
+    case 'Polygon': {
+      const polygon = _simplifyPolygonCoordinates(coordinates, stride);
+      return polygon?.length ? polygon : null;
+    }
+    case 'MultiPolygon': {
+      const polygons = coordinates
+        .map(poly => _simplifyPolygonCoordinates(poly, stride))
+        .filter(poly => Array.isArray(poly) && poly.length);
+      return polygons.length ? polygons : null;
+    }
     default:
       return coordinates;
   }
@@ -413,13 +435,41 @@ export function decimateLine(coords, stride, closed) {
   if (closed) {
     const first = out[0];
     const last = out[out.length - 1];
-    if (!first || !last || first[0] !== last[0] || first[1] !== last[1]) out.push(first);
-    while (out.length < 4) out.splice(out.length - 1, 0, out[0]);
+    if (!first || !last) return null;
+    if (first[0] !== last[0] || first[1] !== last[1]) out.push(first);
+    if (out.length < 4) return null;
   } else {
     while (out.length < 2 && coords.length > out.length) out.push(coords[out.length]);
   }
 
   return out;
+}
+
+function _simplifyPolygonCoordinates(polygonCoords, stride) {
+  if (!Array.isArray(polygonCoords) || !polygonCoords.length) return null;
+  const rings = polygonCoords
+    .map(ring => decimateLine(ring, stride, true))
+    .filter(ring => _isRenderableRing(ring));
+  if (!rings.length) return null;
+
+  const outer = rings[0];
+  const holes = rings.slice(1);
+  return [outer, ...holes];
+}
+
+function _isRenderableRing(ring) {
+  if (!Array.isArray(ring) || ring.length < 4) return false;
+  const first = ring[0];
+  const last = ring[ring.length - 1];
+  if (!first || !last || first[0] !== last[0] || first[1] !== last[1]) return false;
+
+  let area2 = 0;
+  for (let i = 0; i < ring.length - 1; i += 1) {
+    const a = ring[i];
+    const b = ring[i + 1];
+    area2 += (a[0] * b[1]) - (b[0] * a[1]);
+  }
+  return Math.abs(area2) > 1e-12;
 }
 
 function _clampSimplifyLevel(value) {

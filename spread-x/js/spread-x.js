@@ -713,16 +713,10 @@ export async function app(opts = {}) {
 
     const detail = $('set-gj-simplify');
     if (detail) {
-      detail.min = String(GEOJSON_LIMITS.detailPercent.min);
-      detail.max = String(GEOJSON_LIMITS.detailPercent.max);
-      if (!Number.isFinite(Number(detail.value))) detail.value = String(GEOJSON_LIMITS.detailPercent.defaultValue);
-    }
-
-    const targetZoom = $('set-gj-detail-zoom');
-    if (targetZoom) {
-      targetZoom.min = String(GEOJSON_LIMITS.targetZoom.min);
-      targetZoom.max = String(GEOJSON_LIMITS.targetZoom.max);
-      if (!Number.isFinite(Number(targetZoom.value))) targetZoom.value = String(GEOJSON_LIMITS.targetZoom.defaultValue);
+      detail.min = '0';
+      detail.max = '4';
+      detail.step = '1';
+      if (!Number.isFinite(Number(detail.value))) detail.value = '4';
     }
   }
 
@@ -1644,8 +1638,36 @@ export async function app(opts = {}) {
     return Math.max(GEOJSON_LIMITS.detailPercent.min, Math.min(GEOJSON_LIMITS.detailPercent.max, detail));
   }
 
+  function _presetDetailPercentFromStyle(style = {}, simplifyLevel = null) {
+    const levels = Array.isArray(style?.detailLevels)
+      ? [...new Set(style.detailLevels
+          .map(level => Number(level?.level))
+          .filter(Number.isFinite))]
+          .sort((a, b) => a - b)
+      : [];
+    if (!levels.length) return null;
+    if (levels.length === 1) return 100;
+
+    const requested = Number(simplifyLevel);
+    const resolved = Number.isFinite(requested) ? requested : levels[0];
+    let nearestIndex = 0;
+    for (let i = 1; i < levels.length; i += 1) {
+      if (Math.abs(levels[i] - resolved) < Math.abs(levels[nearestIndex] - resolved)) {
+        nearestIndex = i;
+      }
+    }
+    if (nearestIndex >= levels.length - 1) return 1;
+    return Math.max(1, Math.round(100 - ((nearestIndex * 100) / (levels.length - 1))));
+  }
+
   function _selectedLayerDetailPercent(selected, stats = null, zoomK = null) {
     if (!selected || selected.type !== LAYER_TYPES.GEOJSON) return null;
+    if (Array.isArray(selected.style?.detailLevels) && selected.style.detailLevels.length) {
+      const simplifyLevel = Number(stats?.simplifyLevel);
+      if (!Number.isFinite(simplifyLevel)) return null;
+      const mapped = _presetDetailPercentFromStyle(selected.style, simplifyLevel);
+      return Number.isFinite(mapped) ? mapped : _simplifyLevelToDetailPercent(simplifyLevel);
+    }
     if (selected.style?.adaptiveSimplify !== false) {
       return resolveGeojsonAdaptiveDetailPercent({
         zoomScale: _statusZoomK(zoomK),
@@ -1657,30 +1679,34 @@ export async function app(opts = {}) {
     return _simplifyLevelToDetailPercent(simplifyLevel);
   }
 
-  function _refreshRangeReadout(slider) {
-    if (!slider) return;
-    const row = slider.closest('.sx-setting-row');
-    const out = row?.querySelector('.sx-range-value');
-    if (!out) return;
-    const stepStr = slider.getAttribute('step') || '';
-    const decimals = (stepStr.includes('.') ? stepStr.split('.')[1].length : 0);
-    const num = Number(slider.value);
-    out.textContent = Number.isFinite(num) ? num.toFixed(Math.min(decimals, 3)) : slider.value;
-  }
-
   function _syncAdaptiveDetailSliderForSelectedLayer() {
     const selected = layers.find(l => l.id === selectedId);
     if (!selected || selected.type !== LAYER_TYPES.GEOJSON) return;
-    if (selected.style?.adaptiveSimplify === false) return;
     const slider = $('set-gj-simplify');
     if (!slider) return;
-    const detailPercent = resolveGeojsonAdaptiveDetailPercent({
-      zoomScale: _statusZoomK(),
-      targetZoom: selected.style?.detailZoom,
-    });
-    if (Number(slider.value) === detailPercent) return;
-    slider.value = String(detailPercent);
-    _refreshRangeReadout(slider);
+
+    const liveSimplify = _currentGeojsonSimplifyLevel(selected);
+    if (!Number.isFinite(liveSimplify)) return;
+
+    let options = [];
+    try {
+      options = JSON.parse(slider.dataset.detailOptions || '[]');
+    } catch {
+      options = [];
+    }
+    if (!Array.isArray(options) || !options.length) return;
+
+    let nearestIndex = 0;
+    for (let i = 1; i < options.length; i += 1) {
+      if (Math.abs(Number(options[i]?.simplifyLevel) - liveSimplify) < Math.abs(Number(options[nearestIndex]?.simplifyLevel) - liveSimplify)) {
+        nearestIndex = i;
+      }
+    }
+    const nextValue = String(nearestIndex);
+    if (slider.value !== nextValue) slider.value = nextValue;
+
+    const readout = $('set-gj-simplify-readout');
+    if (readout) readout.textContent = String(options[nearestIndex]?.label || '');
   }
 
   function _syncBasemapLayoutLockUI(layer) {

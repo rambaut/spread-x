@@ -36,7 +36,20 @@ export function createLayerImportService({
 
     switch (layerType) {
       case layerTypes.GEOJSON:
-        data = parseGeoData(detected.data, topojson);
+        if (detected.type === 'topojson' && detected.data?.type === 'Topology') {
+          const objectKeys = Object.keys(detected.data.objects || {});
+          const objectName = objectKeys[0] || null;
+          if (!objectName) {
+            throw new Error('TopoJSON contains no objects');
+          }
+          data = {
+            _sxFormat: 'topojson-object',
+            topology: detected.data,
+            objectName,
+          };
+        } else {
+          data = parseGeoData(detected.data, topojson);
+        }
         break;
       case layerTypes.POINTS:
         data = detected.type === 'csv'

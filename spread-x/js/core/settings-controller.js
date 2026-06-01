@@ -24,25 +24,108 @@ function _simplifyLevelToDetailPercent(simplifyLevel) {
   return _clampDetailPercent(detail);
 }
 
-function _detailPercentToSimplifyLevel(detailPercent) {
-  const detail = _clampDetailPercent(detailPercent);
-  const simplifySpan = GEOJSON_LIMITS.simplifyLevel.max - GEOJSON_LIMITS.simplifyLevel.min;
-  const detailSpan = GEOJSON_LIMITS.detailPercent.max - GEOJSON_LIMITS.detailPercent.min;
-  if (simplifySpan <= 0 || detailSpan <= 0) return GEOJSON_LIMITS.simplifyLevel.min;
-  const normalized = (GEOJSON_LIMITS.detailPercent.max - detail) / detailSpan;
-  const simplify = GEOJSON_LIMITS.simplifyLevel.min + Math.round(normalized * simplifySpan);
-  return _clampSimplifyLevel(simplify);
+function _presetDetailPercentForIndex(index, total) {
+  if (total <= 1) return 100;
+  if (index >= total - 1) return 1;
+  return Math.max(1, Math.round(100 - ((index * 100) / (total - 1))));
 }
 
-function _updateRangeReadout(sliderEl) {
+function _directLayerDetailOptions() {
+  const detailPercents = [20, 40, 60, 80, 100];
+  return detailPercents.map(percent => {
+    const normalized = (100 - percent) / 100;
+    const simplifyLevel = _clampSimplifyLevel(
+      GEOJSON_LIMITS.simplifyLevel.min
+      + Math.round((GEOJSON_LIMITS.simplifyLevel.max - GEOJSON_LIMITS.simplifyLevel.min) * normalized)
+    );
+    return {
+      simplifyLevel,
+      detailPercent: percent,
+      label: `${percent}%`,
+    };
+  }).sort((a, b) => a.detailPercent - b.detailPercent || a.simplifyLevel - b.simplifyLevel);
+}
+
+function _presetDetailOptions(style = {}) {
+  const levels = Array.isArray(style?.detailLevels)
+    ? [...new Set(style.detailLevels
+        .map(level => _clampSimplifyLevel(level?.level))
+        .filter(Number.isFinite))]
+        .sort((a, b) => a - b)
+    : [];
+
+  if (!levels.length) return [];
+
+  return levels.map((level, index) => {
+    const detailPercent = _presetDetailPercentForIndex(index, levels.length);
+    return {
+      simplifyLevel: level,
+      detailPercent,
+      label: `${detailPercent}%`,
+    };
+  }).sort((a, b) => a.detailPercent - b.detailPercent || a.simplifyLevel - b.simplifyLevel);
+}
+
+function _detailOptionsForStyle(style = {}, { presetLinked = false } = {}) {
+  if (presetLinked) {
+    const preset = _presetDetailOptions(style);
+    if (preset.length) return preset;
+  }
+  return _directLayerDetailOptions();
+}
+
+function _updateGeojsonDetailReadout(readoutEl, option) {
+  if (!readoutEl) return;
+  readoutEl.textContent = option?.label || '';
+}
+
+function _selectedGeojsonDetailOption(sliderEl) {
+  if (!sliderEl) return null;
+  let options = [];
+  try {
+    options = JSON.parse(sliderEl.dataset.detailOptions || '[]');
+  } catch {
+    options = [];
+  }
+  if (!Array.isArray(options) || !options.length) return null;
+  const min = Number(sliderEl.min) || 0;
+  const max = Number(sliderEl.max) || (options.length - 1);
+  const rawIndex = Math.round(Number(sliderEl.value) || 0);
+  const index = Math.max(min, Math.min(max, rawIndex));
+  return options[index - min] || options[0] || null;
+}
+
+function _populateGeojsonDetailControl(sliderEl, readoutEl, style = {}, currentSimplifyLevel = null, { presetLinked = false } = {}) {
   if (!sliderEl) return;
-  const row = sliderEl.closest('.sx-setting-row');
-  const out = row?.querySelector('.sx-range-value');
-  if (!out) return;
-  const stepStr = sliderEl.getAttribute('step') || '';
-  const decimals = (stepStr.includes('.') ? stepStr.split('.')[1].length : 0);
-  const num = Number(sliderEl.value);
-  out.textContent = Number.isFinite(num) ? num.toFixed(Math.min(decimals, 3)) : sliderEl.value;
+  const options = _detailOptionsForStyle(style, { presetLinked });
+  if (!options.length) {
+    sliderEl.min = '0';
+    sliderEl.max = '0';
+    sliderEl.step = '1';
+    sliderEl.value = '0';
+    sliderEl.dataset.detailOptions = JSON.stringify([{ simplifyLevel: 0, detailPercent: 100, label: '100%' }]);
+    _updateGeojsonDetailReadout(readoutEl, { label: '100%' });
+    return;
+  }
+
+  const requested = Number(currentSimplifyLevel);
+  const resolvedLevel = Number.isFinite(requested)
+    ? _clampSimplifyLevel(requested)
+    : options[0].simplifyLevel;
+
+  let nearestIndex = 0;
+  for (let i = 1; i < options.length; i += 1) {
+    if (Math.abs(options[i].simplifyLevel - resolvedLevel) < Math.abs(options[nearestIndex].simplifyLevel - resolvedLevel)) {
+      nearestIndex = i;
+    }
+  }
+
+  sliderEl.min = '0';
+  sliderEl.max = String(options.length - 1);
+  sliderEl.step = '1';
+  sliderEl.value = String(nearestIndex);
+  sliderEl.dataset.detailOptions = JSON.stringify(options);
+  _updateGeojsonDetailReadout(readoutEl, options[nearestIndex]);
 }
 
 export function isOceansLayer(layer = {}) {
@@ -68,15 +151,15 @@ export function syncGeoJSONPerfUI({ getEl, layer, autoGeojsonPerfPolicy } = {}) 
   const minZoom = getEl?.('set-gj-min-zoom');
   const maxVisible = getEl?.('set-gj-max-visible');
   const detail = getEl?.('set-gj-simplify');
-  const detailZoom = getEl?.('set-gj-detail-zoom');
   const adaptiveToggle = getEl?.('set-gj-adaptive-simplify');
+  const adaptiveRow = adaptiveToggle?.closest('.sx-setting-row');
   const presetLinked = Array.isArray(layer?.style?.detailLevels) && layer.style.detailLevels.length > 0;
 
   if (minZoom) minZoom.disabled = false;
   if (maxVisible) maxVisible.disabled = false;
-  if (adaptiveToggle) adaptiveToggle.disabled = presetLinked;
-  if (detail) detail.disabled = presetLinked || adaptiveSimplify;
-  if (detailZoom) detailZoom.disabled = presetLinked || !adaptiveSimplify;
+  if (adaptiveRow) adaptiveRow.style.display = presetLinked ? '' : 'none';
+  if (adaptiveToggle) adaptiveToggle.disabled = !presetLinked;
+  if (detail) detail.disabled = presetLinked && adaptiveSimplify;
 }
 
 export function syncBasemapModeUI({ getEl } = {}) {
@@ -155,27 +238,31 @@ export function populateSettingsForLayer({
       getEl('set-gj-sw').value = s.strokeWidth;
       if (getEl('set-gj-min-zoom')) getEl('set-gj-min-zoom').value = Number.isFinite(+s.minZoom) ? +s.minZoom : GEOJSON_LIMITS.renderPolicy.minZoomDefault;
       if (getEl('set-gj-max-visible')) getEl('set-gj-max-visible').value = Number.isFinite(+s.maxVisible) ? +s.maxVisible : GEOJSON_LIMITS.renderPolicy.maxVisibleDefault;
-      if (getEl('set-gj-simplify')) {
-        if (Array.isArray(s.detailLevels) && s.detailLevels.length) {
-          const current = s.detailLevels.find(level => Number(level.level) === Number(s.simplify)) || s.detailLevels[0];
-          const detailPercent = _simplifyLevelToDetailPercent(current?.level ?? GEOJSON_LIMITS.simplifyLevel.defaultValue);
-          getEl('set-gj-simplify').value = detailPercent;
-          _updateRangeReadout(getEl('set-gj-simplify'));
-        } else {
-        const adaptive = s.adaptiveSimplify !== false;
+      {
+        const detailControl = getEl('set-gj-simplify');
+        const detailReadout = getEl('set-gj-simplify-readout');
+        const presetLinked = Array.isArray(s.detailLevels) && s.detailLevels.length > 0;
+        const adaptive = presetLinked ? (s.adaptiveSimplify !== false) : false;
         const liveSimplify = Number(getCurrentGeojsonSimplifyLevel?.(layer));
-        const simplifyLevel = adaptive
-          ? (Number.isFinite(liveSimplify)
-              ? liveSimplify
-              : (Number.isFinite(+s.maxSimplify) ? +s.maxSimplify : GEOJSON_LIMITS.simplifyLevel.max))
-          : (Number.isFinite(+s.simplify) ? +s.simplify : GEOJSON_LIMITS.simplifyLevel.defaultValue);
-        const detailPercent = _simplifyLevelToDetailPercent(simplifyLevel);
-        getEl('set-gj-simplify').value = detailPercent;
-        _updateRangeReadout(getEl('set-gj-simplify'));
+        let simplifyLevel = GEOJSON_LIMITS.simplifyLevel.defaultValue;
+
+        if (presetLinked) {
+          simplifyLevel = Number.isFinite(liveSimplify)
+            ? liveSimplify
+            : Number(s.detailLevels[0]?.level ?? GEOJSON_LIMITS.simplifyLevel.defaultValue);
+        } else {
+          simplifyLevel = Number.isFinite(+s.simplify)
+            ? +s.simplify
+            : (Number.isFinite(liveSimplify) ? liveSimplify : GEOJSON_LIMITS.simplifyLevel.defaultValue);
         }
+
+        _populateGeojsonDetailControl(detailControl, detailReadout, s, simplifyLevel, { presetLinked });
+
+        const adaptiveRow = getEl('set-gj-adaptive-simplify')?.closest('.sx-setting-row');
+        if (adaptiveRow) adaptiveRow.style.display = presetLinked ? '' : 'none';
+        if (!presetLinked) s.adaptiveSimplify = false;
       }
       if (getEl('set-gj-adaptive-simplify')) getEl('set-gj-adaptive-simplify').checked = s.adaptiveSimplify !== false;
-      if (getEl('set-gj-detail-zoom')) getEl('set-gj-detail-zoom').value = Number.isFinite(+s.detailZoom) ? +s.detailZoom : GEOJSON_LIMITS.targetZoom.defaultValue;
       if (getEl('set-render-svg-switch-zoom')) {
         const threshold = Number(getCanvasToSvgThreshold?.());
         getEl('set-render-svg-switch-zoom').value = Number.isFinite(threshold) ? threshold : RENDERER_MODE_LIMITS.canvasToSvgSwitchDefault;
@@ -299,21 +386,21 @@ export function readSettingsFromLayerUI({
       s.autoPerf = false;
       if (getEl('set-gj-min-zoom')) s.minZoom = +getEl('set-gj-min-zoom')?.value;
       if (getEl('set-gj-max-visible')) s.maxVisible = +getEl('set-gj-max-visible')?.value;
-      const wasAdaptive = s.adaptiveSimplify !== false;
       const presetLinked = Array.isArray(s.detailLevels) && s.detailLevels.length > 0;
-      if (!presetLinked) {
-        const detailPercent = getEl('set-gj-simplify') ? +getEl('set-gj-simplify')?.value : GEOJSON_LIMITS.detailPercent.defaultValue;
-        const requestedSimplify = _detailPercentToSimplifyLevel(detailPercent);
+      const detailOption = _selectedGeojsonDetailOption(getEl('set-gj-simplify'));
+      if (presetLinked) {
         if (getEl('set-gj-adaptive-simplify')) s.adaptiveSimplify = getEl('set-gj-adaptive-simplify')?.checked;
-        const isAdaptive = s.adaptiveSimplify !== false;
-        if (getEl('set-gj-detail-zoom')) s.detailZoom = +getEl('set-gj-detail-zoom')?.value;
-        s.simplify = isAdaptive ? 0 : requestedSimplify;
-        s.minSimplify = 0;
-        if (!isAdaptive) {
-          s.maxSimplify = requestedSimplify;
-        } else if (!wasAdaptive || !Number.isFinite(+s.maxSimplify)) {
-          s.maxSimplify = requestedSimplify;
+        if (s.adaptiveSimplify === false && detailOption) {
+          s.simplify = _clampSimplifyLevel(detailOption.simplifyLevel);
         }
+      } else {
+        const requestedSimplify = detailOption
+          ? _clampSimplifyLevel(detailOption.simplifyLevel)
+          : GEOJSON_LIMITS.simplifyLevel.defaultValue;
+        s.adaptiveSimplify = false;
+        s.simplify = requestedSimplify;
+        s.minSimplify = 0;
+        s.maxSimplify = requestedSimplify;
       }
       if (getEl('set-gj-debug-perf')) s.debugPerfStatus = getEl('set-gj-debug-perf')?.checked;
       if (getEl('set-render-svg-switch-zoom')) {
@@ -380,6 +467,10 @@ export function bindSettingsPanelHandlers({
   const onInput = e => {
     clearTimeout(timer);
     const target = e?.target;
+    if (target?.id === 'set-gj-simplify') {
+      const option = _selectedGeojsonDetailOption(target);
+      _updateGeojsonDetailReadout(target.closest('.sx-setting-row')?.querySelector('#set-gj-simplify-readout'), option);
+    }
     const delay = target?.id === 'set-gj-simplify' ? GEOJSON_LIMITS.adaptiveDetailDebounceMs : debounceMs;
     timer = setTimeout(() => {
       apply();

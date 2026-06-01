@@ -484,17 +484,14 @@ function _buildSettingsPanel() {
       </div>
       <div class="sx-setting-row">
         <label for="set-gj-simplify">Detail</label>
-        <input type="range" id="set-gj-simplify" class="form-range" min="1" max="100" step="1" value="67" />
+        <input type="range" id="set-gj-simplify" class="form-range" min="0" max="4" step="1" value="4" />
+        <span id="set-gj-simplify-readout" class="sx-range-value">100%</span>
       </div>
       <div class="sx-setting-row">
         <label>
           <input type="checkbox" id="set-gj-adaptive-simplify" class="form-check-input" checked />
           Adaptive
         </label>
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-gj-detail-zoom">Target zoom</label>
-        <input type="range" id="set-gj-detail-zoom" class="form-range" min="2" max="1024" step="1" value="256" />
       </div>
       <div class="sx-setting-row">
         <label>
