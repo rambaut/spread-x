@@ -16,6 +16,7 @@ set -euo pipefail
 #   ...
 #   spread-x/data/maps/GeoBoundaries/combined.level10.topo.json
 #   spread-x/data/maps/GeoBoundaries/combined-pyramid-index.json
+#   spread-x/data/maps/GeoBoundaries/manifest.json
 #
 # Requires mapshaper:
 #   npm i -g mapshaper
@@ -111,6 +112,7 @@ for level in $(seq 0 "$MAX_LEVEL"); do
 done
 
 INDEX_FILE="$OUT_DIR/combined-pyramid-index.json"
+MANIFEST_FILE="$OUT_DIR/manifest.json"
 {
   echo "{"
   echo "  \"version\": 1,"
@@ -123,6 +125,60 @@ INDEX_FILE="$OUT_DIR/combined-pyramid-index.json"
   echo "  ]"
   echo "}"
 } > "$INDEX_FILE"
+
+cat > "$MANIFEST_FILE" <<'JSON'
+{
+  "version": 1,
+  "name": "GeoBoundaries",
+  "folder": "GeoBoundaries",
+  "title": "GeoBoundaries",
+  "description": "Shared-edge administrative boundary data with a precomputed simplification pyramid for admin0, admin1, admin2, and land.",
+  "logo": "bi-globe2",
+  "license": {
+    "name": "CC BY 4.0 / GeoBoundaries",
+    "url": "https://www.geoboundaries.org/"
+  },
+  "color": "#2aa198",
+  "objects": {
+    "admin0": "admin0",
+    "admin1": "admin1",
+    "admin2": "admin2",
+    "land": "land"
+  },
+  "features": [
+    { "key": "admin0", "label": "Admin 0", "objectName": "admin0", "color": "#2aa198", "description": "Country boundaries" },
+    { "key": "admin1", "label": "Admin 1", "objectName": "admin1", "color": "#4e79a7", "description": "First-level administrative boundaries" },
+    { "key": "admin2", "label": "Admin 2", "objectName": "admin2", "color": "#f28e2b", "description": "Second-level administrative boundaries" },
+    { "key": "land", "label": "Land", "objectName": "land", "color": "#8bc34a", "description": "Dissolved land polygons built from admin0 arcs" }
+  ],
+  "detailLevels": [
+    { "level": 0, "label": "Full detail", "switchZoom": 1 },
+    { "level": 1, "label": "Level 1", "switchZoom": 1.4 },
+    { "level": 2, "label": "Level 2", "switchZoom": 1.8 },
+    { "level": 3, "label": "Level 3", "switchZoom": 2.4 },
+    { "level": 4, "label": "Level 4", "switchZoom": 3.1 },
+    { "level": 5, "label": "Level 5", "switchZoom": 4.0 },
+    { "level": 6, "label": "Level 6", "switchZoom": 5.2 },
+    { "level": 7, "label": "Level 7", "switchZoom": 6.8 },
+    { "level": 8, "label": "Level 8", "switchZoom": 8.6 },
+    { "level": 9, "label": "Level 9", "switchZoom": 10.8 },
+    { "level": 10, "label": "Level 10", "switchZoom": 13.5 }
+  ],
+  "levels": [
+    { "level": 0, "file": "combined.level0.topo.json" },
+    { "level": 1, "file": "combined.level1.topo.json" },
+    { "level": 2, "file": "combined.level2.topo.json" },
+    { "level": 3, "file": "combined.level3.topo.json" },
+    { "level": 4, "file": "combined.level4.topo.json" },
+    { "level": 5, "file": "combined.level5.topo.json" },
+    { "level": 6, "file": "combined.level6.topo.json" },
+    { "level": 7, "file": "combined.level7.topo.json" },
+    { "level": 8, "file": "combined.level8.topo.json" },
+    { "level": 9, "file": "combined.level9.topo.json" },
+    { "level": 10, "file": "combined.level10.topo.json" }
+  ]
+}
+JSON
 
 rm -rf "$TMP_DIR"
 

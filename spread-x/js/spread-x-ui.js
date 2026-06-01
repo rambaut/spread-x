@@ -40,18 +40,15 @@ function _buildLayerPanel() {
       <button id="btn-layer-close" title="Close">&times;</button>
     </div>
   </div>
-  <div class="sx-panel-body" style="display:flex;flex-direction:column">    <!-- Standard NE layers section — shown in Layout Mode only -->
-    <div id="layout-std-layers" class="sx-layout-std-layers" style="display:none">
-      <div class="sx-std-layers-header">
-        <i class="bi bi-stack me-1"></i>Add Standard Layer
-      </div>
-      <div id="std-layers-list" class="sx-std-layers-list"></div>
-    </div>    <div id="layer-list" class="sx-layer-list" style="flex:1;overflow-y:auto"></div>
+  <div class="sx-panel-body" style="display:flex;flex-direction:column">
+    <div class="sx-layer-add-row">
+      <button id="btn-add-layer" class="btn btn-sm btn-outline-secondary" title="Add preset">
+        <i class="bi bi-plus-lg me-1"></i>Add preset
+      </button>
+    </div>
+    <div id="layer-list" class="sx-layer-list" style="flex:1;overflow-y:auto"></div>
     <div class="sx-layer-controls">
       <div class="btn-group btn-group-sm">
-        <button id="btn-add-layer" class="btn btn-outline-secondary" title="Add layer">
-          <i class="bi bi-plus-lg"></i>
-        </button>
         <button id="btn-delete-layer" class="btn btn-outline-secondary" title="Delete selected layer" disabled>
           <i class="bi bi-trash"></i>
         </button>
@@ -594,26 +591,9 @@ function _buildAppToolbar() {
         <i class="bi bi-layers"></i><i class="bi bi-caret-right ms-1"></i>
       </button>
       <div class="pt-toolbar-sep"></div>
-      <div class="sx-dropdown" id="add-layer-dropdown">
-        <button id="btn-add-toolbar" class="btn btn-sm btn-outline-secondary" title="Add layer…">
-          <i class="bi bi-plus-lg me-1"></i><i class="bi bi-caret-down-fill" style="font-size:0.55rem"></i>
-        </button>
-        <div class="sx-dropdown-menu" id="add-layer-menu">
-          <button class="sx-dropdown-item" data-add-type="geojson">
-            <i class="bi bi-hexagon"></i> GeoJSON / TopoJSON
-          </button>
-          <button class="sx-dropdown-item" data-add-type="points">
-            <i class="bi bi-geo-alt"></i> Points (CSV / JSON)
-          </button>
-          <button class="sx-dropdown-item" data-add-type="tree">
-            <i class="bi bi-diagram-3"></i> Phylogenetic Tree
-          </button>
-          <div class="sx-dropdown-sep"></div>
-          <button class="sx-dropdown-item" id="btn-import-auto">
-            <i class="bi bi-file-earmark-arrow-up"></i> Import File…
-          </button>
-        </div>
-      </div>`,
+      <button id="btn-add-toolbar" class="btn btn-sm btn-outline-secondary" title="Add layer">
+        <i class="bi bi-plus-lg me-1"></i>Add Layer
+      </button>`,
     centerHTML: `
       <span id="toolbar-title" class="text-muted" style="font-size:0.85rem">SPREAD-X</span>`,
     rightHTML: `
@@ -660,6 +640,82 @@ function _buildMapContainer() {
 
 function _buildAppModals() {
   return buildModalHTML({
+    overlayId: 'preset-layer-overlay',
+    title: 'Add Layer Preset',
+    icon: 'stack',
+    closeId: 'btn-preset-layer-close',
+    bodyId: 'preset-layer-body',
+    body: `
+      <div id="preset-browser-section">
+        <p class="text-muted" style="font-size:0.84rem;margin-bottom:0.75rem">
+          Choose a dataset preset, then configure which feature layers and detail levels to add.
+        </p>
+        <div class="preset-browser-scroll">
+          <div id="preset-browser-list" class="preset-browser-list"></div>
+        </div>
+        <div class="mt-3 d-flex justify-content-end">
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-preset-import">
+            <i class="bi bi-file-earmark-arrow-up me-1"></i>Import File…
+          </button>
+        </div>
+      </div>
+      <div id="preset-config-section" style="display:none">
+        <div class="sx-setting-row">
+          <label for="preset-instance-name">Layer name</label>
+          <input id="preset-instance-name" class="form-control form-control-sm sx-setting-input" type="text" />
+        </div>
+        <div class="sx-setting-row">
+          <label>Preset</label>
+          <span id="preset-instance-label" class="sx-setting-value"></span>
+        </div>
+        <div class="sx-setting-row">
+          <label>Folder</label>
+          <span id="preset-instance-folder" class="sx-setting-value"></span>
+        </div>
+        <div class="sx-setting-row">
+          <label>License</label>
+          <span id="preset-instance-license" class="sx-setting-value"></span>
+        </div>
+        <div class="sx-setting-row preset-description-row">
+          <label>Description</label>
+          <span id="preset-instance-description" class="sx-setting-value"></span>
+        </div>
+        <hr class="my-2" />
+        <h3 class="sx-modal-subheading">Feature layers</h3>
+        <div class="preset-feature-scroll">
+          <div id="preset-feature-list" class="preset-feature-list"></div>
+        </div>
+        <hr class="my-2" />
+        <h3 class="sx-modal-subheading">Detail levels</h3>
+        <div class="table-responsive preset-detail-scroll">
+          <table class="table table-sm sx-preset-detail-table align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="width:12%">Use</th>
+                <th style="width:16%">Level</th>
+                <th style="width:26%">Switch zoom</th>
+                <th>Label</th>
+              </tr>
+            </thead>
+            <tbody id="preset-detail-list"></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="preset-progress-section" style="display:none">
+        <div class="preset-progress-box">
+          <div class="pt-spinner"></div>
+          <p id="preset-progress-message" class="preset-progress-message">Working…</p>
+          <button class="btn btn-sm btn-outline-secondary" id="btn-preset-progress-cancel">Cancel</button>
+        </div>
+      </div>`,
+    footerId: 'preset-layer-footer',
+    footer: `
+      <button class="btn btn-sm btn-outline-secondary" id="btn-preset-cancel">Cancel</button>
+      <button class="btn btn-sm btn-outline-secondary" id="btn-preset-reset">Reset</button>
+      <button class="btn btn-sm btn-primary" id="btn-preset-apply">Apply</button>
+      <button class="btn btn-sm btn-outline-secondary" id="btn-preset-config-cancel" style="display:none">Cancel</button>
+      <button class="btn btn-sm btn-primary" id="btn-preset-add" style="display:none">Add</button>`,
+  }) + '\n' + buildModalHTML({
     overlayId: 'import-file-overlay',
     title: 'Import Layer Data',
     icon: 'file-earmark-arrow-up',

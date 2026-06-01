@@ -11,7 +11,7 @@ import { createGraphicsExporter } from '@artic-network/pearcore/graphics-export.
 import { loadSettings, saveSettings as _saveSettings } from '@artic-network/pearcore/pearcore-app.js';
 import { upgradeAllPaletteColourPickers } from '@artic-network/pearcore/colorpicker.js';
 import { CATEGORICAL_PALETTES } from '@artic-network/pearcore/palettes.js';
-import { createLayer, duplicateLayer, LAYER_TYPES, LAYER_ICONS, NE_STANDARD_LAYERS, MAP_OUTLINES } from './layers.js';
+import { createLayer, duplicateLayer, LAYER_TYPES, LAYER_ICONS, MAP_OUTLINES } from './layers.js';
 import {
   pointFields,
 } from './parsers.js';
@@ -36,6 +36,15 @@ import { createLayoutModeController } from './core/layout-mode-controller.js';
 import { createWelcomeOverlayController } from './core/welcome-overlay-controller.js';
 import { createImportUiController } from './core/import-ui-controller.js';
 import { createGeojsonFeatureInteractionController } from './core/geojson-feature-interaction-controller.js';
+import {
+  buildPresetFeatureLayers,
+  groupPresetLayers,
+  loadPresetCatalog,
+  loadPresetManifest,
+  loadPresetTopologySource,
+  resolvePresetDetailSelection,
+  resolvePresetFeatureSelection,
+} from './core/preset-layer-service.js';
 import { computeFrameRect } from './core/frame-geometry.js';
 import { pickTopoObjectKey } from './core/topology-utils.js';
 import { createLayerManager } from './core/layer-manager.js';
@@ -76,6 +85,7 @@ export async function app(opts = {}) {
   let selectedId = null;
   let settings = {};
   let _layoutMode = false;
+  let mapInteractionController = null;
   let _canvasToSvgSwitchZoom = CANVAS_TO_SVG_THRESHOLD;
   let _naturalEarthRasterSets = ['NE1'];
   let _rasterSetsDiscovered = false;
@@ -632,6 +642,13 @@ export async function app(opts = {}) {
       const existing = layers.find(l => l.id === sl.id);
       if (existing) Object.assign(existing.style, sl.style);
     }
+    for (const layer of layers) {
+      const presetId = layer.style?.presetInstanceId;
+      const match = typeof presetId === 'string' && presetId.match(/^preset-(\d+)$/);
+      if (match) {
+        _presetState.counter = Math.max(_presetState.counter, Number(match[1]) + 1);
+      }
+    }
     if (saved.selectedId) selectedId = saved.selectedId;
   }
   if (saved?.render?.canvasToSvgSwitchZoom != null) {
@@ -747,27 +764,49 @@ export async function app(opts = {}) {
     const modeLabel = renderer.isUsingCanvas() ? 'Canvas' : 'SVG';
     const reversed = [...layers].reverse();
     const frameFromList = reversed.find(layer => layer.type === LAYER_TYPES.FRAME) || null;
-    const listLayers = reversed.filter(layer => layer.type !== LAYER_TYPES.FRAME);
+    const presetGroups = _groupPresetLayersForRender();
+    const listLayers = _layoutMode
+      ? [
+          ...reversed.filter(layer => layer.type !== LAYER_TYPES.FRAME && !_isPresetFeatureLayer(layer)),
+          ...presetGroups.map(group => ({
+            id: group.id,
+            type: 'preset-group',
+            name: group.name,
+            visible: group.featureLayers.some(layer => layer.visible !== false),
+            presetGroup: group,
+          })),
+        ]
+      : reversed.filter(layer => layer.type !== LAYER_TYPES.FRAME);
     if (frameFromList) listLayers.push(frameFromList);
 
     // Render top-most first, but keep the frame row at the bottom.
     for (const layer of listLayers) {
-      const visLocked = layer.type === LAYER_TYPES.BASEMAP || layer.type === LAYER_TYPES.FRAME;
-      const layoutLocked = _layoutMode && layer.type !== LAYER_TYPES.BASEMAP;
-      const showConfigButton = layer.type === LAYER_TYPES.BASEMAP;
+      const isPresetGroup = layer.type === 'preset-group';
+      const presetGroup = isPresetGroup ? layer.presetGroup : null;
+      const visLocked = layer.type === LAYER_TYPES.BASEMAP || layer.type === LAYER_TYPES.FRAME || isPresetGroup;
+      const layoutLocked = _layoutMode && layer.type !== LAYER_TYPES.BASEMAP && !isPresetGroup;
+      const isPresetFeature = !isPresetGroup && _isPresetFeatureLayer(layer);
+      const showConfigButton = layer.type === LAYER_TYPES.BASEMAP || isPresetGroup || isPresetFeature;
+      const rowColor = isPresetGroup ? presetGroup.color : (layer.style?.presetColor || '');
       const el = document.createElement('div');
       el.className = 'sx-layer-item'
         + (layer.id === selectedId ? ' selected' : '')
-        + (layoutLocked ? ' layout-locked' : '');
+        + (layoutLocked ? ' layout-locked' : '')
+        + (isPresetGroup ? ' preset-group-row' : '')
+        + (isPresetFeature ? ' preset-feature-row' : '');
       el.dataset.layerId = layer.id;
+      el.dataset.presetInstanceId = isPresetGroup ? presetGroup.id : (layer.style?.presetInstanceId || '');
       el.innerHTML = `
         <button class="sx-layer-vis ${layer.visible ? '' : 'off'} ${visLocked || layoutLocked ? 'disabled' : ''}" data-vis="${layer.id}" title="${visLocked ? 'Visibility locked' : layoutLocked ? 'Hidden in Layout Mode' : 'Toggle visibility'}" ${visLocked || layoutLocked ? 'disabled' : ''}>
           <i class="bi ${layer.visible ? 'bi-eye' : 'bi-eye-slash'}"></i>
         </button>
-        <i class="bi ${LAYER_ICONS[layer.type] || 'bi-square'} sx-layer-icon"></i>
+        <i class="bi ${isPresetGroup ? 'bi-stack' : (LAYER_ICONS[layer.type] || 'bi-square')} sx-layer-icon"></i>
+        ${rowColor ? `<span class="sx-preset-color-dot" style="background:${_escapeHtml(rowColor)}"></span>` : ''}
         <span class="sx-render-mode-indicator ${modeClass}" title="Rendered via ${modeLabel}" aria-label="Rendered via ${modeLabel}"></span>
         <span class="sx-layer-name">${_escapeHtml(layer.name)}</span>
-        ${showConfigButton ? `<button class="sx-layer-action-btn" data-layout-config="${layer.id}" title="Configure Base Map in Layout mode" ${_layoutMode ? 'disabled' : ''}>Config</button>` : ''}`;
+        ${isPresetGroup ? `<span class="sx-layer-meta">${_escapeHtml((presetGroup.featureLayers || []).map(feature => feature.name).join(', '))}</span>` : ''}
+        ${showConfigButton ? `<button class="sx-layer-action-btn" data-layer-config="${layer.id}" title="Configure layer preset">Config</button>` : ''}
+        ${isPresetGroup ? `<button class="sx-layer-action-btn" data-layer-remove-preset="${presetGroup.id}" title="Remove this preset">Remove</button>` : ''}`;
       layerList.appendChild(el);
     }
     _updateLayerButtons();
@@ -796,10 +835,634 @@ export async function app(opts = {}) {
     layerManager.ensureFixedBoundaryLayers();
   }
 
-  layerList?.addEventListener('click', e => {
-    const configBtn = e.target.closest('[data-layout-config]');
+  const _presetState = {
+    catalog: { version: 1, presets: [] },
+    manifests: new Map(),
+    topologyByFolder: new Map(),
+    modal: {
+      mode: 'browse',
+      manifest: null,
+      source: null,
+      featureSelection: new Set(),
+      detailSelection: new Set(),
+      detailRows: [],
+      editGroup: null,
+      operationToken: 0,
+      activeOperationToken: null,
+      canceledOperationTokens: new Set(),
+      progressReturnMode: 'browse',
+    },
+    counter: 1,
+  };
+
+  void (async () => {
+    _presetState.catalog = await loadPresetCatalog({ fetchImpl: fetch });
+    await _rehydratePresetLayersFromState();
+    _ensureFixedBoundaryLayers();
+    _renderLayerList();
+    _showSettingsForLayer(selectedId);
+    _queueRender();
+  })();
+
+  async function _rehydratePresetLayersFromState() {
+    const presetLayers = layers.filter(layer => _isPresetFeatureLayer(layer));
+    if (!presetLayers.length) return;
+
+    if (!Array.isArray(_presetState.catalog?.presets) || !_presetState.catalog.presets.length) {
+      _presetState.catalog = await loadPresetCatalog({ fetchImpl: fetch });
+    }
+
+    for (const layer of presetLayers) {
+      const folder = layer.style?.presetFolder || layer.style?.presetKey;
+      if (!folder) continue;
+
+      let manifest = _presetState.manifests.get(folder);
+      if (!manifest) {
+        const entry = _presetState.catalog.presets.find(item => item.folder === folder) || { folder };
+        manifest = await _loadPresetEntry(entry);
+      }
+      if (!manifest) continue;
+
+      let source = _presetState.topologyByFolder.get(folder);
+      if (!source) {
+        source = await loadPresetTopologySource({ fetchImpl: fetch, manifest });
+        if (source) _presetState.topologyByFolder.set(folder, source);
+      }
+      if (!source) continue;
+
+      const featureKey = String(layer.style?.presetFeatureKey || '').toLowerCase();
+      const objectName = manifest.objects?.[featureKey] || manifest.objects?.[layer.style?.presetFeatureLabel] || featureKey;
+      layer.data = {
+        ...source,
+        objectName,
+      };
+    }
+  }
+
+  function _presetInstanceIdForLayer(layer) {
+    return layer?.style?.presetInstanceId || null;
+  }
+
+  function _isPresetFeatureLayer(layer) {
+    return !!_presetInstanceIdForLayer(layer);
+  }
+
+  function _groupPresetLayersForRender() {
+    return groupPresetLayers(layers);
+  }
+
+  function _findPresetGroupByLayerId(layerId) {
+    const directGroup = _groupPresetLayersForRender().find(group => group.id === layerId);
+    if (directGroup) return directGroup;
+    const layer = layers.find(item => item.id === layerId);
+    const instanceId = _presetInstanceIdForLayer(layer);
+    if (!instanceId) return null;
+    return _groupPresetLayersForRender().find(group => group.id === instanceId) || null;
+  }
+
+  function _presetFeatureRowsFromManifest(manifest) {
+    return Array.isArray(manifest?.features) ? manifest.features : [];
+  }
+
+  function _presetSwitchZoomBoundary(rank) {
+    const exponent = Math.max(0, 8 - (Math.max(0, Number(rank) || 0) * 0.5));
+    return Math.max(1, Math.round((2 ** exponent) * 100) / 100);
+  }
+
+  function _presetDetailRowsFromManifest(manifest) {
+    const levels = Array.isArray(manifest?.detailLevels) ? manifest.detailLevels : [];
+    const normalized = levels
+      .map(level => ({
+        ...level,
+        level: Number(level?.level),
+      }))
+      .filter(level => Number.isFinite(level.level))
+      .sort((a, b) => a.level - b.level);
+
+    return normalized.map((level, index) => ({
+      ...level,
+      switchZoom: _presetSwitchZoomBoundary(index),
+    }));
+  }
+
+  function _presetDefaultName(manifest) {
+    return manifest?.name || manifest?.title || manifest?.folder || 'Preset Layer';
+  }
+
+  function _presetDefaultColor(manifest) {
+    const color = manifest?.color || manifest?.accentColor || '';
+    return color || '#2aa198';
+  }
+
+  function _presetInstanceName(manifest, overrideName = '') {
+    return overrideName?.trim() || _presetDefaultName(manifest);
+  }
+
+  function _presetInstanceCountPrefix() {
+    const current = _presetState.counter++;
+    return `preset-${current}`;
+  }
+
+  function _presetSelectedFeatures(manifest) {
+    return new Set(_presetFeatureRowsFromManifest(manifest).map(feature => String(feature.key || '').toLowerCase()));
+  }
+
+  function _presetSelectedDetails(manifest) {
+    return new Set(_presetDetailRowsFromManifest(manifest).map(level => Number(level.level)));
+  }
+
+  function _presetConfigToSelection() {
+    return {
+      features: [..._presetState.modal.featureSelection],
+      detailLevels: _presetState.modal.detailRows
+        .filter(row => row.enabled)
+        .map(row => ({
+          level: row.level,
+          label: row.label,
+          switchZoom: row.switchZoom,
+        })),
+    };
+  }
+
+  function _presetModalSetFooterMode(mode) {
+    const isBrowse = mode === 'browse';
+    const isConfig = mode === 'config';
+    const browseCancel = $('btn-preset-cancel');
+    const browseReset = $('btn-preset-reset');
+    const browseApply = $('btn-preset-apply');
+    const configCancel = $('btn-preset-config-cancel');
+    const configAdd = $('btn-preset-add');
+
+    if (browseCancel) browseCancel.style.display = isBrowse ? '' : 'none';
+    if (browseReset) browseReset.style.display = isBrowse ? '' : 'none';
+    if (browseApply) browseApply.style.display = isBrowse ? '' : 'none';
+    if (configCancel) configCancel.style.display = isConfig ? '' : 'none';
+    if (configAdd) configAdd.style.display = isConfig ? '' : 'none';
+  }
+
+  function _presetOperationIsCanceled(token) {
+    if (!Number.isFinite(token)) return false;
+    return _presetState.modal.canceledOperationTokens.has(token)
+      || _presetState.modal.activeOperationToken !== token;
+  }
+
+  function _presetModalRestore(mode = 'browse') {
+    const browser = $('preset-browser-section');
+    const config = $('preset-config-section');
+    const progress = $('preset-progress-section');
+    if (progress) progress.style.display = 'none';
+
+    if (mode === 'config' && _presetState.modal.manifest) {
+      _presetState.modal.mode = 'config';
+      if (browser) browser.style.display = 'none';
+      if (config) config.style.display = '';
+      _presetModalSetFooterMode('config');
+      const addButton = $('btn-preset-add');
+      if (addButton) {
+        addButton.disabled = false;
+        addButton.textContent = _presetState.modal.editGroup ? 'Save' : 'Add';
+      }
+      _presetModalSetVisible('config');
+      return;
+    }
+
+    _presetModalShowBrowse();
+  }
+
+  function _presetModalBeginProgress(message, { returnMode = 'config' } = {}) {
+    const browser = $('preset-browser-section');
+    const config = $('preset-config-section');
+    const progress = $('preset-progress-section');
+    const progressMessage = $('preset-progress-message');
+    if (browser) browser.style.display = 'none';
+    if (config) config.style.display = 'none';
+    if (progress) progress.style.display = '';
+    if (progressMessage) progressMessage.textContent = message || 'Working...';
+    _presetState.modal.mode = 'progress';
+    _presetState.modal.progressReturnMode = returnMode;
+    _presetModalSetFooterMode('progress');
+    _presetModalSetVisible('progress');
+
+    const token = ++_presetState.modal.operationToken;
+    _presetState.modal.activeOperationToken = token;
+    _presetState.modal.canceledOperationTokens.delete(token);
+    return token;
+  }
+
+  function _presetWaitForPaint() {
+    return new Promise(resolve => {
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => resolve());
+      } else {
+        setTimeout(resolve, 0);
+      }
+    });
+  }
+
+  function _presetModalCancelActiveOperation({ restore = true } = {}) {
+    const token = _presetState.modal.activeOperationToken;
+    if (Number.isFinite(token)) {
+      _presetState.modal.canceledOperationTokens.add(token);
+    }
+    _presetState.modal.activeOperationToken = null;
+
+    if (restore) {
+      _presetModalRestore(_presetState.modal.progressReturnMode || 'browse');
+    }
+  }
+
+  function _presetModalCompleteOperation(token, { restoreMode = 'browse' } = {}) {
+    if (_presetOperationIsCanceled(token)) return false;
+    _presetState.modal.activeOperationToken = null;
+    _presetState.modal.canceledOperationTokens.delete(token);
+    _presetModalRestore(restoreMode);
+    return true;
+  }
+
+  function _presetFolderAdded(folder) {
+    if (!folder) return false;
+    return _groupPresetLayersForRender().some(group => String(group.folder || '') === String(folder));
+  }
+
+  async function _renderPresetBrowserList() {
+    const browser = $('preset-browser-list');
+    if (!browser) return;
+
+    browser.innerHTML = '<div class="text-muted" style="padding:8px">Loading presets…</div>';
+    const presets = Array.isArray(_presetState.catalog?.presets) ? _presetState.catalog.presets : [];
+    const manifestRows = await Promise.all(presets.map(async preset => ({
+      preset,
+      manifest: await _loadPresetEntry(preset),
+    })));
+
+    browser.innerHTML = '';
+    for (const entry of manifestRows) {
+      const preset = entry.preset;
+      const manifest = entry.manifest || preset;
+      const folder = String(manifest.folder || preset.folder || '');
+      const features = Array.isArray(manifest.features) ? manifest.features : [];
+      const levels = _presetDetailRowsFromManifest(manifest);
+      const isAdded = _presetFolderAdded(folder);
+
+      const card = document.createElement('div');
+      card.className = `preset-browser-card${isAdded ? ' is-added' : ''}`;
+      card.innerHTML = `
+        <div class="preset-browser-card-head">
+          <div>
+            <div class="preset-browser-title">
+              ${manifest.logo ? (String(manifest.logo).startsWith('bi-') ? `<i class="bi ${_escapeHtml(manifest.logo)}"></i>` : _escapeHtml(manifest.logo)) : ''}
+              <span>${_escapeHtml(manifest.name || manifest.title || folder || 'Preset')}</span>
+            </div>
+            <div class="preset-browser-subtitle">${_escapeHtml(manifest.description || preset.description || '')}</div>
+          </div>
+          <button class="btn btn-sm btn-primary" data-preset-add="${_escapeHtml(folder)}" ${isAdded ? 'disabled' : ''}>${isAdded ? 'Added' : 'Add'}</button>
+        </div>
+        <div class="preset-browser-meta">
+          <span class="badge text-bg-secondary">${_escapeHtml(folder || 'No folder')}</span>
+          <span class="badge text-bg-secondary">${_escapeHtml(manifest.license?.name || manifest.license || preset.license?.name || preset.license || 'No license')}</span>
+          <span class="badge text-bg-dark">${_escapeHtml(`${levels.length} detail levels`)}</span>
+        </div>
+        <div class="preset-browser-features">
+          ${features.map(feature => `<span class="badge text-bg-info">${_escapeHtml(feature.label || feature.name || feature.key || 'Feature')}</span>`).join('')}
+        </div>`;
+      browser.appendChild(card);
+    }
+
+    browser.querySelectorAll('[data-preset-add]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const originalText = btn.textContent || 'Add';
+        btn.disabled = true;
+        btn.textContent = 'Loading...';
+        const folder = btn.dataset.presetAdd;
+        const presetEntry = _presetState.catalog.presets.find(item => item.folder === folder);
+        try {
+          if (!presetEntry) {
+            $('status-stats').textContent = 'Preset entry could not be found.';
+            return;
+          }
+          const manifest = await _loadPresetEntry(presetEntry);
+          if (!manifest) {
+            $('status-stats').textContent = `Could not load preset manifest: ${folder}`;
+            return;
+          }
+          _presetModalShowConfig(manifest, {
+            instanceName: _presetInstanceName(manifest),
+          });
+          if (!_presetState.modal.source) {
+            void loadPresetTopologySource({ fetchImpl: fetch, manifest }).then(source => {
+              if (!source) return;
+              if (_presetState.modal.manifest?.folder === manifest.folder) {
+                _presetState.modal.source = source;
+              }
+              if (manifest.folder) {
+                _presetState.topologyByFolder.set(manifest.folder, source);
+              }
+            }).catch(err => {
+              console.warn('Could not prefetch preset topology source:', err);
+            });
+          }
+        } catch (err) {
+          console.error('Failed to open preset configuration:', err);
+          $('status-stats').textContent = 'Could not open preset configuration.';
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+      });
+    });
+  }
+
+  function _presetModalSetVisible(mode) {
+    const overlay = $('preset-layer-overlay');
+    if (!overlay) return;
+    const isVisible = mode !== 'none' && !!mode;
+    overlay.classList.toggle('open', isVisible);
+    overlay.style.display = isVisible ? '' : 'none';
+    overlay.dataset.mode = isVisible ? mode : 'none';
+  }
+
+  function _presetModalShowBrowse() {
+    _presetState.modal.mode = 'browse';
+    _presetState.modal.manifest = null;
+    _presetState.modal.source = null;
+    _presetState.modal.featureSelection = new Set();
+    _presetState.modal.detailSelection = new Set();
+    _presetState.modal.detailRows = [];
+    _presetState.modal.editGroup = null;
+    const browser = $('preset-browser-section');
+    const config = $('preset-config-section');
+    const progress = $('preset-progress-section');
+    if (browser) browser.style.display = '';
+    if (config) config.style.display = 'none';
+    if (progress) progress.style.display = 'none';
+    _presetModalSetFooterMode('browse');
+    _presetModalSetVisible('browse');
+    void _renderPresetBrowserList();
+  }
+
+  function _presetModalShowConfig(manifest, { instanceName = '', selectedFeatures = null, selectedDetails = null, detailRows = null, editGroup = null } = {}) {
+    if (!manifest) return;
+    _presetState.modal.mode = 'config';
+    _presetState.modal.manifest = manifest;
+    _presetState.modal.source = manifest.folder
+      ? (_presetState.topologyByFolder.get(manifest.folder) || null)
+      : null;
+    _presetState.modal.editGroup = editGroup;
+    _presetState.modal.featureSelection = selectedFeatures instanceof Set ? new Set(selectedFeatures) : _presetSelectedFeatures(manifest);
+    _presetState.modal.detailSelection = selectedDetails instanceof Set ? new Set(selectedDetails) : _presetSelectedDetails(manifest);
+    const sourceDetailRows = Array.isArray(detailRows) && detailRows.length
+      ? detailRows
+      : _presetDetailRowsFromManifest(manifest);
+    _presetState.modal.detailRows = sourceDetailRows.map(row => ({
+      level: Number(row.level),
+      label: String(row.label || `Level ${row.level}`),
+      switchZoom: Number(row.switchZoom) || 1,
+      enabled: _presetState.modal.detailSelection.has(Number(row.level)),
+    }));
+
+    const browser = $('preset-browser-section');
+    const config = $('preset-config-section');
+    const progress = $('preset-progress-section');
+    const nameInput = $('preset-instance-name');
+    const label = $('preset-instance-label');
+    const folder = $('preset-instance-folder');
+    const license = $('preset-instance-license');
+    const description = $('preset-instance-description');
+
+    if (browser) browser.style.display = 'none';
+    if (config) config.style.display = '';
+    if (progress) progress.style.display = 'none';
+    _presetModalSetFooterMode('config');
+    const addButton = $('btn-preset-add');
+    if (addButton) {
+      addButton.disabled = false;
+      addButton.textContent = editGroup ? 'Save' : 'Add';
+    }
+    if (nameInput) nameInput.value = _presetInstanceName(manifest, instanceName);
+    if (label) label.textContent = _presetDefaultName(manifest);
+    if (folder) folder.textContent = manifest.folder || '';
+    if (description) description.setAttribute('title', manifest.description || '');
+    if (license) license.textContent = manifest.license?.name || manifest.license || '';
+    if (description) description.textContent = manifest.description || '';
+
+    _presetModalSetVisible('config');
+    _renderPresetModalFeatureList();
+    _renderPresetModalDetailList();
+  }
+
+  function _renderPresetModalFeatureList() {
+    const container = $('preset-feature-list');
+    if (!container) return;
+    const manifest = _presetState.modal.manifest;
+    const features = _presetFeatureRowsFromManifest(manifest);
+    container.innerHTML = '';
+    for (const feature of features) {
+      const key = String(feature.key || '').toLowerCase();
+      const row = document.createElement('label');
+      row.className = 'preset-feature-item';
+      row.innerHTML = `
+        <input type="checkbox" class="form-check-input me-2" data-preset-feature="${_escapeHtml(feature.key || '')}" ${_presetState.modal.featureSelection.has(key) ? 'checked' : ''} />
+        <span class="preset-feature-swatch" style="background:${_escapeHtml(feature.color || _presetDefaultColor(manifest))}"></span>
+        <span class="preset-feature-name">${_escapeHtml(feature.label || feature.name || feature.key || 'Feature')}</span>
+        <span class="preset-feature-meta">${_escapeHtml(feature.description || '')}</span>`;
+      container.appendChild(row);
+    }
+
+    container.querySelectorAll('[data-preset-feature]').forEach(input => {
+      input.addEventListener('change', () => {
+        const value = String(input.dataset.presetFeature || '').toLowerCase();
+        if (input.checked) _presetState.modal.featureSelection.add(value);
+        else _presetState.modal.featureSelection.delete(value);
+      });
+    });
+  }
+
+  function _renderPresetModalDetailList() {
+    const body = $('preset-detail-list');
+    if (!body) return;
+    body.innerHTML = '';
+    for (const rowData of _presetState.modal.detailRows) {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td><input type="checkbox" class="form-check-input" data-preset-detail-enabled="${rowData.level}" ${rowData.enabled ? 'checked' : ''} /></td>
+        <td>${_escapeHtml(String(rowData.level))}</td>
+        <td><input type="number" class="form-control form-control-sm" data-preset-detail-zoom="${rowData.level}" min="1" max="256" step="0.01" value="${_escapeHtml(String(rowData.switchZoom))}" /></td>
+        <td>${_escapeHtml(rowData.label || `Level ${rowData.level}`)}</td>`;
+      body.appendChild(row);
+    }
+
+    body.querySelectorAll('[data-preset-detail-enabled]').forEach(input => {
+      input.addEventListener('change', () => {
+        const level = Number(input.dataset.presetDetailEnabled);
+        const row = _presetState.modal.detailRows.find(item => item.level === level);
+        if (row) row.enabled = input.checked;
+      });
+    });
+
+    body.querySelectorAll('[data-preset-detail-zoom]').forEach(input => {
+      input.addEventListener('input', () => {
+        const level = Number(input.dataset.presetDetailZoom);
+        const row = _presetState.modal.detailRows.find(item => item.level === level);
+        if (row) row.switchZoom = Math.max(1, Number(input.value) || 1);
+      });
+    });
+  }
+
+  async function _loadPresetEntry(entry) {
+    if (!entry?.folder) return null;
+    if (_presetState.manifests.has(entry.folder)) return _presetState.manifests.get(entry.folder);
+
+    const manifest = await loadPresetManifest({ fetchImpl: fetch, folder: entry.folder });
+    if (!manifest) return null;
+    _presetState.manifests.set(entry.folder, manifest);
+    return manifest;
+  }
+
+  function _closePresetModal() {
+    _presetModalCancelActiveOperation({ restore: false });
+    _presetModalSetVisible('none');
+    _renderLayerList();
+  }
+
+  async function _applyPresetSelection({ operationToken = null } = {}) {
+    const manifest = _presetState.modal.manifest;
+    if (!manifest) return false;
+    if (_presetOperationIsCanceled(operationToken)) return false;
+    const selection = _presetConfigToSelection();
+    const featureRows = resolvePresetFeatureSelection(manifest, selection);
+    const detailRows = resolvePresetDetailSelection(manifest, selection);
+    if (!featureRows.length || !detailRows.length) {
+      $('status-stats').textContent = 'Select at least one feature and one detail level.';
+      return false;
+    }
+
+    const cachedSource = manifest.folder ? _presetState.topologyByFolder.get(manifest.folder) : null;
+    if (!_presetState.modal.source && !cachedSource) {
+      $('status-stats').textContent = `Loading preset source: ${manifest.name || manifest.folder}`;
+    }
+    const source = _presetState.modal.source
+      || cachedSource
+      || await loadPresetTopologySource({ fetchImpl: fetch, manifest });
+    if (_presetOperationIsCanceled(operationToken)) return false;
+    if (!source) {
+      $('status-stats').textContent = `Could not load preset source: ${manifest.name || manifest.folder}`;
+      return false;
+    }
+    _presetState.modal.source = source;
+    if (manifest.folder) {
+      _presetState.topologyByFolder.set(manifest.folder, source);
+    }
+
+    const instanceName = _presetInstanceName(manifest, $('preset-instance-name')?.value || '');
+    const existingGroup = _presetState.modal.editGroup;
+    const instanceId = existingGroup?.id || _presetInstanceCountPrefix();
+    const presetColor = _presetDefaultColor(manifest);
+    const featureLayers = buildPresetFeatureLayers({
+      createLayer,
+      layerTypes: LAYER_TYPES,
+      manifest,
+      topologySource: source,
+      presetInstanceId: instanceId,
+      presetInstanceName: instanceName,
+      presetColor,
+      features: featureRows,
+      detailLevels: detailRows,
+    });
+
+    if (!featureLayers.length) {
+      $('status-stats').textContent = 'No preset layers were created.';
+      return false;
+    }
+    if (_presetOperationIsCanceled(operationToken)) return false;
+
+    if (existingGroup) {
+      for (const featureLayer of existingGroup.featureLayers) {
+        layerManager.deleteById(featureLayer.id);
+      }
+    }
+
+    const totalLayers = featureLayers.length;
+    const insertedLayerIds = new Set();
+    for (let index = 0; index < totalLayers; index += 1) {
+      if (_presetOperationIsCanceled(operationToken)) return false;
+      const layer = featureLayers[index];
+      layerManager.insertBeforeFrame(layer);
+      insertedLayerIds.add(layer.id);
+
+      const progressMessage = $('preset-progress-message');
+      if (progressMessage) {
+        progressMessage.textContent = `Adding layers ${index + 1}/${totalLayers}...`;
+      }
+
+      if ((index + 1) < totalLayers && ((index + 1) % 6 === 0)) {
+        await _presetWaitForPaint();
+      }
+    }
+
+    // Defensive integrity pass: ensure every created preset layer exists in the
+    // live layer array. If anything is missing, repair before rendering UI.
+    const missingLayers = featureLayers.filter(layer => !layers.some(item => item.id === layer.id));
+    if (missingLayers.length) {
+      for (const layer of missingLayers) {
+        layerManager.insertBeforeFrame(layer);
+        insertedLayerIds.add(layer.id);
+      }
+      console.warn('Preset add repaired missing layer insertions.', {
+        expected: totalLayers,
+        repaired: missingLayers.length,
+      });
+    }
+
+    if (![...insertedLayerIds].some(id => layers.some(item => item.id === id))) {
+      $('status-stats').textContent = 'Preset layers were not inserted. Please try again.';
+      return false;
+    }
+
+    selectedId = featureLayers[0].id;
+    _ensureFixedBoundaryLayers();
+    _renderLayerList();
+    _showSettingsForLayer(selectedId);
+    _render();
+    _saveState();
+    $('status-stats').textContent = `${existingGroup ? 'Updated' : 'Added'} preset: ${instanceName}`;
+    return true;
+  }
+
+  layerList?.addEventListener('click', async e => {
+    const configBtn = e.target.closest('[data-layer-config]');
     if (configBtn) {
-      _enterLayoutMode();
+      const group = _findPresetGroupByLayerId(configBtn.dataset.layerConfig);
+      const layer = layers.find(item => item.id === configBtn.dataset.layerConfig);
+      if (group) {
+        const presetEntry = _presetState.catalog.presets.find(item => item.folder === group.folder) || null;
+        const manifest = _presetState.manifests.get(group.folder) || await _loadPresetEntry(presetEntry || { folder: group.folder });
+        if (manifest) {
+          _presetModalShowConfig(manifest, {
+            instanceName: group.name,
+            selectedFeatures: new Set(group.featureLayers.map(feature => String(feature.style?.presetFeatureKey || '').toLowerCase())),
+            selectedDetails: new Set((group.featureLayers[0]?.style?.detailLevels || []).map(level => Number(level.level))),
+            detailRows: group.featureLayers[0]?.style?.detailLevels || null,
+            editGroup: group,
+          });
+        }
+      } else if (layer?.type === LAYER_TYPES.BASEMAP) {
+        _enterLayoutMode();
+      }
+      return;
+    }
+    const removePresetBtn = e.target.closest('[data-layer-remove-preset]');
+    if (removePresetBtn) {
+      const group = _groupPresetLayersForRender().find(item => item.id === removePresetBtn.dataset.layerRemovePreset);
+      if (!group) return;
+      for (const featureLayer of group.featureLayers) {
+        layerManager.deleteById(featureLayer.id);
+      }
+      if (selectedId && group.featureLayers.some(layer => layer.id === selectedId)) {
+        selectedId = layers.find(layer => layer.type === LAYER_TYPES.BASEMAP)?.id || null;
+      }
+      _ensureFixedBoundaryLayers();
+      _renderLayerList();
+      _render();
+      _saveState();
       return;
     }
     // Visibility toggle
@@ -827,6 +1490,7 @@ export async function app(opts = {}) {
     // Select
     const item = e.target.closest('.sx-layer-item');
     if (item) {
+      if (item.dataset.presetInstanceId && _layoutMode) return;
       const layer = layers.find(l => l.id === item.dataset.layerId);
       // In layout mode only the basemap layer is selectable
       if (_layoutMode && layer?.type !== LAYER_TYPES.BASEMAP) return;
@@ -847,8 +1511,6 @@ export async function app(opts = {}) {
     const maxMovableIdx = Math.max(minMovableIdx, _frameIndex() - 1);
     $('btn-move-up').disabled   = _layoutMode || idx < 0 || isLocked || idx >= maxMovableIdx;
     $('btn-move-down').disabled = _layoutMode || idx < 0 || isLocked || idx <= minMovableIdx;
-    $('btn-add-toolbar')?.toggleAttribute('disabled', _layoutMode);
-    $('btn-add-layer')?.toggleAttribute('disabled', _layoutMode);
   }
 
   // Layer CRUD buttons
@@ -881,23 +1543,76 @@ export async function app(opts = {}) {
     _renderLayerList(); _render(); _saveState();
   }
 
-  // ── Add layer dropdown ───────────────────────────────────────────────
-  const addMenu = $('add-layer-menu');
+  // ── Add layer preset modal ────────────────────────────────────────────
+  async function _openPresetModal() {
+    if (!_presetState.catalog?.presets?.length) {
+      _presetState.catalog = await loadPresetCatalog({ fetchImpl: fetch });
+    }
+
+    _presetModalShowBrowse();
+  }
+
   $('btn-add-toolbar')?.addEventListener('click', e => {
     e.stopPropagation();
-    addMenu?.classList.toggle('show');
+    _openPresetModal();
   });
   $('btn-add-layer')?.addEventListener('click', e => {
     e.stopPropagation();
-    addMenu?.classList.toggle('show');
+    _openPresetModal();
   });
-  document.addEventListener('click', () => addMenu?.classList.remove('show'));
-
-  addMenu?.querySelectorAll('[data-add-type]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      addMenu.classList.remove('show');
-      _openImportModal(btn.dataset.addType);
-    });
+  $('btn-preset-cancel')?.addEventListener('click', () => _closePresetModal());
+  $('btn-preset-reset')?.addEventListener('click', () => _closePresetModal());
+  $('btn-preset-apply')?.addEventListener('click', () => _closePresetModal());
+  $('btn-preset-config-cancel')?.addEventListener('click', () => _presetModalShowBrowse());
+  $('btn-preset-progress-cancel')?.addEventListener('click', () => {
+    _presetModalCancelActiveOperation({ restore: true });
+    $('status-stats').textContent = 'Preset operation canceled.';
+  });
+  $('btn-preset-add')?.addEventListener('click', async () => {
+    const button = $('btn-preset-add');
+    if (!button) {
+      const token = _presetModalBeginProgress('Adding preset layers…', { returnMode: 'config' });
+      await _presetWaitForPaint();
+      const ok = await _applyPresetSelection({ operationToken: token });
+      if (ok) {
+        _presetModalCompleteOperation(token, { restoreMode: 'browse' });
+        _renderLayerList();
+      }
+      return;
+    }
+    const originalText = button.textContent || 'Add';
+    button.disabled = true;
+    button.textContent = 'Adding...';
+    try {
+      const token = _presetModalBeginProgress('Adding preset layers…', { returnMode: 'config' });
+      await _presetWaitForPaint();
+      const ok = await _applyPresetSelection({ operationToken: token });
+      if (ok) {
+        _presetModalCompleteOperation(token, { restoreMode: 'browse' });
+        _renderLayerList();
+      } else if (!_presetOperationIsCanceled(token)) {
+        _presetModalCompleteOperation(token, { restoreMode: 'config' });
+        button.disabled = false;
+        button.textContent = originalText;
+      } else {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    } catch (err) {
+      console.error('Failed to add preset selection:', err);
+      $('status-stats').textContent = 'Could not add preset selection.';
+      _presetModalCancelActiveOperation({ restore: true });
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  });
+  $('btn-preset-import')?.addEventListener('click', () => {
+    _closePresetModal();
+    _openImportModal('auto');
+  });
+  $('btn-preset-layer-close')?.addEventListener('click', () => _closePresetModal());
+  $('preset-layer-overlay')?.addEventListener('click', e => {
+    if (e.target?.id === 'preset-layer-overlay') _closePresetModal();
   });
 
   // ── Settings panel wiring ────────────────────────────────────────────
@@ -1193,7 +1908,6 @@ export async function app(opts = {}) {
     saveState: () => _saveState(),
     getZoomTransform: () => renderer.getZoomTransform?.(),
     getViewportSize: () => _viewportSize(),
-    standardLayerDefs: NE_STANDARD_LAYERS,
     mapOutlines: MAP_OUTLINES,
     fetchImpl: fetch,
     topojson,
@@ -1243,7 +1957,6 @@ export async function app(opts = {}) {
   zoomBox.style.display = 'none';
   canvasWrapper?.appendChild(zoomBox);
 
-  let mapInteractionController = null;
   const geojsonFeatureInteraction = createGeojsonFeatureInteractionController({
     canvasWrapper,
     d3,
@@ -1699,9 +2412,6 @@ export async function app(opts = {}) {
   initToolbarHeight(root);
 
   // ── Initial render ───────────────────────────────────────────────────
-  await defaultGeojsonBootstrap.loadDefaultOceansLayer();
-  await defaultGeojsonBootstrap.loadDefaultCountriesLayer();
-  await defaultGeojsonBootstrap.loadDefaultAdminDetailLayers();
   _renderLayerList();
   _showSettingsForLayer(selectedId);
   await _render();

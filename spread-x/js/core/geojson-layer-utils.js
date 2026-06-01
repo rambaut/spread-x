@@ -277,6 +277,26 @@ function _collectArcIndexes(arcs, counts, state) {
 }
 
 export function resolveGeojsonSimplifyLevel({ zoomScale = 1, featureCount = 0, style = {} } = {}) {
+  const scheduledDetailLevels = Array.isArray(style.detailLevels)
+    ? style.detailLevels
+        .map(level => ({
+          level: _clampSimplifyLevel(level?.level),
+          switchZoom: Math.max(1, Number(level?.switchZoom) || 1),
+        }))
+        .filter(level => Number.isFinite(level.level))
+        .sort((a, b) => a.switchZoom - b.switchZoom || a.level - b.level)
+    : [];
+
+  if (scheduledDetailLevels.length) {
+    const zoom = Math.max(1, Number(zoomScale) || 1);
+    let selectedLevel = scheduledDetailLevels[0].level;
+    for (const level of scheduledDetailLevels) {
+      if (zoom >= level.switchZoom) selectedLevel = level.level;
+      else break;
+    }
+    return _clampSimplifyLevel(selectedLevel);
+  }
+
   const manualLevel = _clampSimplifyLevel(style.simplify ?? 0);
   if (style.adaptiveSimplify === false) return manualLevel;
 

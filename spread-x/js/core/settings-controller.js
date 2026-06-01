@@ -69,11 +69,14 @@ export function syncGeoJSONPerfUI({ getEl, layer, autoGeojsonPerfPolicy } = {}) 
   const maxVisible = getEl?.('set-gj-max-visible');
   const detail = getEl?.('set-gj-simplify');
   const detailZoom = getEl?.('set-gj-detail-zoom');
+  const adaptiveToggle = getEl?.('set-gj-adaptive-simplify');
+  const presetLinked = Array.isArray(layer?.style?.detailLevels) && layer.style.detailLevels.length > 0;
 
   if (minZoom) minZoom.disabled = false;
   if (maxVisible) maxVisible.disabled = false;
-  if (detail) detail.disabled = adaptiveSimplify;
-  if (detailZoom) detailZoom.disabled = !adaptiveSimplify;
+  if (adaptiveToggle) adaptiveToggle.disabled = presetLinked;
+  if (detail) detail.disabled = presetLinked || adaptiveSimplify;
+  if (detailZoom) detailZoom.disabled = presetLinked || !adaptiveSimplify;
 }
 
 export function syncBasemapModeUI({ getEl } = {}) {
@@ -153,6 +156,12 @@ export function populateSettingsForLayer({
       if (getEl('set-gj-min-zoom')) getEl('set-gj-min-zoom').value = Number.isFinite(+s.minZoom) ? +s.minZoom : GEOJSON_LIMITS.renderPolicy.minZoomDefault;
       if (getEl('set-gj-max-visible')) getEl('set-gj-max-visible').value = Number.isFinite(+s.maxVisible) ? +s.maxVisible : GEOJSON_LIMITS.renderPolicy.maxVisibleDefault;
       if (getEl('set-gj-simplify')) {
+        if (Array.isArray(s.detailLevels) && s.detailLevels.length) {
+          const current = s.detailLevels.find(level => Number(level.level) === Number(s.simplify)) || s.detailLevels[0];
+          const detailPercent = _simplifyLevelToDetailPercent(current?.level ?? GEOJSON_LIMITS.simplifyLevel.defaultValue);
+          getEl('set-gj-simplify').value = detailPercent;
+          _updateRangeReadout(getEl('set-gj-simplify'));
+        } else {
         const adaptive = s.adaptiveSimplify !== false;
         const liveSimplify = Number(getCurrentGeojsonSimplifyLevel?.(layer));
         const simplifyLevel = adaptive
@@ -163,6 +172,7 @@ export function populateSettingsForLayer({
         const detailPercent = _simplifyLevelToDetailPercent(simplifyLevel);
         getEl('set-gj-simplify').value = detailPercent;
         _updateRangeReadout(getEl('set-gj-simplify'));
+        }
       }
       if (getEl('set-gj-adaptive-simplify')) getEl('set-gj-adaptive-simplify').checked = s.adaptiveSimplify !== false;
       if (getEl('set-gj-detail-zoom')) getEl('set-gj-detail-zoom').value = Number.isFinite(+s.detailZoom) ? +s.detailZoom : GEOJSON_LIMITS.targetZoom.defaultValue;
@@ -289,20 +299,23 @@ export function readSettingsFromLayerUI({
       s.autoPerf = false;
       if (getEl('set-gj-min-zoom')) s.minZoom = +getEl('set-gj-min-zoom')?.value;
       if (getEl('set-gj-max-visible')) s.maxVisible = +getEl('set-gj-max-visible')?.value;
-      const detailPercent = getEl('set-gj-simplify') ? +getEl('set-gj-simplify')?.value : GEOJSON_LIMITS.detailPercent.defaultValue;
-      const requestedSimplify = _detailPercentToSimplifyLevel(detailPercent);
       const wasAdaptive = s.adaptiveSimplify !== false;
-      if (getEl('set-gj-adaptive-simplify')) s.adaptiveSimplify = getEl('set-gj-adaptive-simplify')?.checked;
-      const isAdaptive = s.adaptiveSimplify !== false;
-      if (getEl('set-gj-detail-zoom')) s.detailZoom = +getEl('set-gj-detail-zoom')?.value;
-      if (getEl('set-gj-debug-perf')) s.debugPerfStatus = getEl('set-gj-debug-perf')?.checked;
-      s.simplify = isAdaptive ? 0 : requestedSimplify;
-      s.minSimplify = 0;
-      if (!isAdaptive) {
-        s.maxSimplify = requestedSimplify;
-      } else if (!wasAdaptive || !Number.isFinite(+s.maxSimplify)) {
-        s.maxSimplify = requestedSimplify;
+      const presetLinked = Array.isArray(s.detailLevels) && s.detailLevels.length > 0;
+      if (!presetLinked) {
+        const detailPercent = getEl('set-gj-simplify') ? +getEl('set-gj-simplify')?.value : GEOJSON_LIMITS.detailPercent.defaultValue;
+        const requestedSimplify = _detailPercentToSimplifyLevel(detailPercent);
+        if (getEl('set-gj-adaptive-simplify')) s.adaptiveSimplify = getEl('set-gj-adaptive-simplify')?.checked;
+        const isAdaptive = s.adaptiveSimplify !== false;
+        if (getEl('set-gj-detail-zoom')) s.detailZoom = +getEl('set-gj-detail-zoom')?.value;
+        s.simplify = isAdaptive ? 0 : requestedSimplify;
+        s.minSimplify = 0;
+        if (!isAdaptive) {
+          s.maxSimplify = requestedSimplify;
+        } else if (!wasAdaptive || !Number.isFinite(+s.maxSimplify)) {
+          s.maxSimplify = requestedSimplify;
+        }
       }
+      if (getEl('set-gj-debug-perf')) s.debugPerfStatus = getEl('set-gj-debug-perf')?.checked;
       if (getEl('set-render-svg-switch-zoom')) {
         setCanvasToSvgThreshold?.(+getEl('set-render-svg-switch-zoom')?.value);
       }
