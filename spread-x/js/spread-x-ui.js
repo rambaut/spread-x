@@ -145,7 +145,14 @@ function _buildSettingsPanel() {
         </select>
       </div>
 
+      <div class="sx-setting-row">
+        <label for="set-bm-bg">Backgound</label>
+        <input type="color" id="set-bm-bg" class="pt-palette-color" value="#ffffff" />
+      </div>
+
       <div id="settings-bm-globe-group">
+
+      <h3><i class="bi bi-globe2"></i> Globe</h3>
 
       <div class="sx-setting-row">
         <label for="set-bm-projection">Projection</label>
@@ -269,10 +276,6 @@ function _buildSettingsPanel() {
         </select>
       </div>
       <div class="sx-setting-row">
-        <label for="set-bm-bg">Background</label>
-        <input type="color" id="set-bm-bg" class="pt-palette-color" value="#ffffff" />
-      </div>
-      <div class="sx-setting-row">
         <label>
           <input type="checkbox" id="set-bm-grat" class="form-check-input" checked />
           Reticule (graticule)
@@ -287,19 +290,29 @@ function _buildSettingsPanel() {
         <input type="color" id="set-bm-grat-stroke" class="pt-palette-color" value="#ffffff" />
       </div>
       <div class="sx-setting-row">
+        <label for="set-bm-grat-width">Reticule width</label>
+        <input type="range" id="set-bm-grat-width" class="form-range" min="0" max="3" step="0.05" value="0.5" />
+      </div>
+      <div class="sx-setting-row">
         <label for="set-bm-grat-opacity">Reticule opacity</label>
         <input type="range" id="set-bm-grat-opacity" class="form-range" min="0" max="100" step="1" value="10" />
       </div>
       <div class="sx-setting-row">
-        <label for="set-bm-proj-boundary">Projection boundary</label>
+        <label for="set-bm-proj-boundary">Boundary</label>
         <input type="color" id="set-bm-proj-boundary" class="pt-palette-color" value="#4a8a5a" />
       </div>
       <div class="sx-setting-row">
-        <label for="set-bm-proj-boundary-sw">Projection boundary width</label>
+        <label for="set-bm-proj-boundary-sw">Boundary width</label>
         <input type="range" id="set-bm-proj-boundary-sw" class="form-range" min="0" max="5" step="0.05" value="1" />
       </div>
       <hr />
-      <h3><i class="bi bi-globe-americas"></i> Globe</h3>
+      <h3><i class="bi bi-globe-americas"></i> Features</h3>
+      <div class="sx-setting-row">
+        <label>
+          <input type="checkbox" id="set-bm-features-layout-only" class="form-check-input" />
+          Layout only (hide in View mode)
+        </label>
+      </div>
       <div class="sx-setting-row">
         <label>
           <input type="checkbox" id="set-bm-globe-on" class="form-check-input" checked />

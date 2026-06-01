@@ -299,6 +299,8 @@ export async function app(opts = {}) {
     const base = _activeBasemapLayer();
     if (base) {
       base.runtime = base.runtime || {};
+      const featuresLayoutOnly = base.style?.featuresLayoutOnly === true;
+      base.runtime.showBasemapFeatures = _layoutMode || !featuresLayoutOnly;
       base.runtime.showBasemapCountryPolygons = _layoutMode;
       if (_layoutMode) {
         base.runtime.hoveredFeatureId = hoveredId;

@@ -126,7 +126,8 @@ export async function drawCanvasBasemapLayer({
     return;
   }
 
-  const showGlobe = s.showGlobe !== false;
+  const showBasemapFeatures = layer?.runtime?.showBasemapFeatures !== false;
+  const showGlobe = showBasemapFeatures && s.showGlobe !== false;
   const showLandBoundaries = showGlobe && s.showLandBoundaries !== false;
   const showCountryBoundaries = showGlobe && s.showCountryBoundaries !== false;
   const oceanFill = s.oceanFill;
@@ -135,6 +136,7 @@ export async function drawCanvasBasemapLayer({
   const landWidth = (s.landBoundaryWidth ?? s.landStrokeWidth ?? 0.5) / k;
   const outlineStroke = s.projectionBoundaryStroke || s.outlineStroke || '#4a8a5a';
   const outlineWidth = (s.projectionBoundaryWidth ?? s.outlineStrokeWidth ?? 1) / k;
+  const showProjectionBoundary = s.showGraticule !== false;
   const ctxPath = d3.geoPath(projection, ctx);
 
   ctx.save();
@@ -144,15 +146,21 @@ export async function drawCanvasBasemapLayer({
     ctx.fillStyle = oceanFill;
     ctx.fill();
   }
-  ctx.strokeStyle = outlineStroke;
-  ctx.lineWidth = outlineWidth;
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-  ctx.stroke();
+  if (showProjectionBoundary && outlineWidth > 0) {
+    ctx.strokeStyle = outlineStroke;
+    ctx.lineWidth = outlineWidth;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  }
   ctx.restore();
 
   if (s.showGraticule) {
     const step = s.graticuleStep || 10;
+    const canTunePrecision = !!projection && typeof projection.precision === 'function';
+    const graticulePrecision = Math.max(0.05, Math.min(2, Number(s.graticuleCurvePrecision ?? 0.2)));
+    const previousPrecision = canTunePrecision ? projection.precision() : null;
+    if (canTunePrecision) projection.precision(graticulePrecision);
     let gCache = graticuleCache;
     if (!gCache || gCache.step !== step) {
       gCache = { step, graticule: d3.geoGraticule().step([step, step])() };
@@ -162,12 +170,13 @@ export async function drawCanvasBasemapLayer({
     ctx.beginPath();
     ctxPath(gCache.graticule);
     ctx.strokeStyle = s.graticuleStroke || '#ffffff';
-    ctx.lineWidth = 0.5 / k;
+    ctx.lineWidth = (s.graticuleWidth ?? 0.5) / k;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.globalAlpha *= (s.graticuleOpacity ?? 0.1);
     ctx.stroke();
     ctx.restore();
+    if (canTunePrecision && Number.isFinite(previousPrecision)) projection.precision(previousPrecision);
   }
 
   const bsrc = s.basemapSource || 'd3';
@@ -261,6 +270,7 @@ export async function drawCanvasGeographicBasemapLayer({
 
   const sourceType = style.geographicSourceType || 'raster';
   const oceanFill = style.geographicOceanFill || style.oceanFill || '#0d2f40';
+  const showProjectionBoundary = style.showGraticule !== false;
   const ctxPath = d3.geoPath(projection, ctx);
 
   ctx.save();
@@ -268,11 +278,13 @@ export async function drawCanvasGeographicBasemapLayer({
   ctxPath({ type: 'Sphere' });
   ctx.fillStyle = oceanFill;
   ctx.fill();
-  ctx.strokeStyle = style.projectionBoundaryStroke || style.outlineStroke || '#4a8a5a';
-  ctx.lineWidth = (style.projectionBoundaryWidth ?? style.outlineStrokeWidth ?? 1) / k;
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-  ctx.stroke();
+  if (showProjectionBoundary && (style.projectionBoundaryWidth ?? style.outlineStrokeWidth ?? 1) > 0) {
+    ctx.strokeStyle = style.projectionBoundaryStroke || style.outlineStroke || '#4a8a5a';
+    ctx.lineWidth = (style.projectionBoundaryWidth ?? style.outlineStrokeWidth ?? 1) / k;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  }
   ctx.restore();
 
   if (sourceType === 'raster') {

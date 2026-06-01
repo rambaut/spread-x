@@ -368,37 +368,45 @@ export async function renderSvgBasemapLayer({
     return;
   }
 
-  const showGlobe = s.showGlobe !== false;
+  const showBasemapFeatures = layer?.runtime?.showBasemapFeatures !== false;
+  const showGlobe = showBasemapFeatures && s.showGlobe !== false;
   const oceanFill = s.oceanFill;
   const landFill = s.landFill;
   const showLandBoundaries = showGlobe && s.showLandBoundaries !== false;
   const showCountryBoundaries = showGlobe && s.showCountryBoundaries !== false;
   const landBoundaryStroke = s.landBoundaryStroke || s.landStroke || '#4a8a5a';
   const landBoundaryWidth = s.landBoundaryWidth ?? s.landStrokeWidth ?? 0.5;
+  const showProjectionBoundary = s.showGraticule !== false;
 
   g.append('path')
     .attr('class', 'basemap-sphere')
     .datum({ type: 'Sphere' })
     .attr('d', path)
     .attr('fill', oceanFill)
-    .attr('stroke', s.projectionBoundaryStroke || s.outlineStroke || '#4a8a5a')
-    .attr('stroke-width', s.projectionBoundaryWidth ?? s.outlineStrokeWidth ?? 1)
+    .attr('stroke', showProjectionBoundary ? (s.projectionBoundaryStroke || s.outlineStroke || '#4a8a5a') : 'none')
+    .attr('stroke-width', showProjectionBoundary ? (s.projectionBoundaryWidth ?? s.outlineStrokeWidth ?? 1) : 0)
     .attr('vector-effect', 'non-scaling-stroke')
     .attr('stroke-linejoin', 'round')
     .attr('stroke-linecap', 'round');
 
   if (s.showGraticule) {
     const step = s.graticuleStep || 10;
+    const projection = typeof path.projection === 'function' ? path.projection() : null;
+    const canTunePrecision = !!projection && typeof projection.precision === 'function';
+    const graticulePrecision = Math.max(0.05, Math.min(2, Number(s.graticuleCurvePrecision ?? 0.2)));
+    const previousPrecision = canTunePrecision ? projection.precision() : null;
+    if (canTunePrecision) projection.precision(graticulePrecision);
     g.append('path')
       .datum(d3.geoGraticule().step([step, step])())
       .attr('d', path)
       .attr('fill', 'none')
       .attr('stroke', s.graticuleStroke || '#ffffff')
-      .attr('stroke-width', 0.5)
+      .attr('stroke-width', s.graticuleWidth ?? 0.5)
       .attr('vector-effect', 'non-scaling-stroke')
       .attr('stroke-linejoin', 'round')
       .attr('stroke-linecap', 'round')
       .attr('opacity', s.graticuleOpacity ?? 0.1);
+    if (canTunePrecision && Number.isFinite(previousPrecision)) projection.precision(previousPrecision);
   }
 
   const bsrc = s.basemapSource || 'd3';
@@ -520,13 +528,14 @@ export async function renderSvgGeographicBasemapLayer({
   const zoomK = currentTransform?.k || 1;
   const sourceType = s.geographicSourceType || 'raster';
   const oceanFill = s.geographicOceanFill || s.oceanFill || '#0d2f40';
+  const showProjectionBoundary = s.showGraticule !== false;
 
   g.append('path')
     .datum({ type: 'Sphere' })
     .attr('d', path)
     .attr('fill', oceanFill)
-    .attr('stroke', s.projectionBoundaryStroke || s.outlineStroke || '#4a8a5a')
-    .attr('stroke-width', s.projectionBoundaryWidth ?? s.outlineStrokeWidth ?? 1)
+    .attr('stroke', showProjectionBoundary ? (s.projectionBoundaryStroke || s.outlineStroke || '#4a8a5a') : 'none')
+    .attr('stroke-width', showProjectionBoundary ? (s.projectionBoundaryWidth ?? s.outlineStrokeWidth ?? 1) : 0)
     .attr('vector-effect', 'non-scaling-stroke')
     .attr('stroke-linejoin', 'round')
     .attr('stroke-linecap', 'round');

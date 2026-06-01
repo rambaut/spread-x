@@ -190,6 +190,10 @@ export function syncBasemapModeUI({ getEl } = {}) {
     if (getEl?.(id)) getEl(id).disabled = !enabled;
   }
 
+  const showReticule = getEl?.('set-bm-grat')?.checked !== false;
+  if (getEl?.('set-bm-proj-boundary')) getEl('set-bm-proj-boundary').disabled = !showReticule;
+  if (getEl?.('set-bm-proj-boundary-sw')) getEl('set-bm-proj-boundary-sw').disabled = !showReticule;
+
   const outlineEnabled = enabled && ((getEl?.('set-bm-land-boundaries')?.checked !== false) || (getEl?.('set-bm-country-boundaries')?.checked !== false));
   if (getEl?.('set-bm-globe-outline')) getEl('set-bm-globe-outline').disabled = !outlineEnabled;
   if (getEl?.('set-bm-globe-outline-sw')) getEl('set-bm-globe-outline-sw').disabled = !outlineEnabled;
@@ -226,9 +230,11 @@ export function populateSettingsForLayer({
       getEl('set-bm-grat').checked = s.showGraticule !== false;
       getEl('set-bm-grat-step').value = s.graticuleStep ?? 10;
       getEl('set-bm-grat-stroke').value = s.graticuleStroke || '#ffffff';
+      getEl('set-bm-grat-width').value = s.graticuleWidth ?? 0.5;
       getEl('set-bm-grat-opacity').value = _opacityToPercent(s.graticuleOpacity ?? 0.1);
       getEl('set-bm-proj-boundary').value = s.projectionBoundaryStroke || '#4a8a5a';
       getEl('set-bm-proj-boundary-sw').value = s.projectionBoundaryWidth ?? 1;
+      getEl('set-bm-features-layout-only').checked = s.featuresLayoutOnly === true;
       getEl('set-bm-globe-on').checked = s.showGlobe !== false;
       getEl('set-bm-water').value = s.oceanFill || '#02292e';
       getEl('set-bm-land').value = s.landFill || '#1a3a2a';
@@ -362,9 +368,11 @@ export function readSettingsFromLayerUI({
       s.showGraticule = getEl('set-bm-grat')?.checked;
       s.graticuleStep = +getEl('set-bm-grat-step')?.value;
       s.graticuleStroke = getEl('set-bm-grat-stroke')?.value;
+      s.graticuleWidth = +getEl('set-bm-grat-width')?.value;
       s.graticuleOpacity = _percentToOpacity(getEl('set-bm-grat-opacity')?.value);
       s.projectionBoundaryStroke = getEl('set-bm-proj-boundary')?.value;
       s.projectionBoundaryWidth = +getEl('set-bm-proj-boundary-sw')?.value;
+      s.featuresLayoutOnly = getEl('set-bm-features-layout-only')?.checked === true;
       s.showGlobe = getEl('set-bm-globe-on')?.checked;
       s.oceanFill = getEl('set-bm-water')?.value;
       s.landFill = getEl('set-bm-land')?.value;
