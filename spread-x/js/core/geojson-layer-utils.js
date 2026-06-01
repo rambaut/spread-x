@@ -22,6 +22,20 @@ export function resolveLayerGeoJSON(layer, { topojson, resolvedCache } = {}) {
   const data = layer?.data;
   if (!data) return null;
 
+  if (data._sxFormat === 'topojson-object-pyramid') {
+    const cached = resolvedCache?.get(layer);
+    if (cached && cached.sourceRef === data) return cached.resolved;
+
+    const topology = _resolvePyramidTopologyForLevel(data, 0);
+    if (!topology || topology.type !== 'Topology') return null;
+    const key = _resolveTopoObjectKey(topology, data.objectName);
+    if (!key) return null;
+
+    const resolved = topojson.feature(topology, topology.objects[key]);
+    resolvedCache?.set(layer, { sourceRef: data, resolved });
+    return resolved;
+  }
+
   if (data._sxFormat !== 'topojson-object') {
     return data;
   }
@@ -48,9 +62,38 @@ export function getSimplifiedLayerData(layer, simplifyLevel, {
   layerCache,
 } = {}) {
   const topoSource = layer?.data;
+  const isPyramidSource = topoSource?._sxFormat === 'topojson-object-pyramid'
+    && topojson?.feature;
   const isTopoSource = topoSource?._sxFormat === 'topojson-object'
     && topoSource?.topology?.type === 'Topology'
     && topojson?.feature;
+
+  if (isPyramidSource) {
+    const level = _clampSimplifyLevel(simplifyLevel);
+    let cache = layerCache?.get(layer);
+    if (!cache || cache.sourceRef !== topoSource) {
+      cache = {
+        sourceRef: topoSource,
+        byLevel: new Map(),
+      };
+      layerCache?.set(layer, cache);
+    }
+
+    if (!cache.byLevel.has(level)) {
+      const topology = _resolvePyramidTopologyForLevel(topoSource, level);
+      if (!topology || topology.type !== 'Topology') return null;
+      const key = _resolveTopoObjectKey(topology, topoSource.objectName);
+      if (!key) return null;
+
+      const feature = topojson.feature(topology, topology.objects[key]);
+      cache.byLevel.set(level, feature);
+      if (level === 0) {
+        resolvedCache?.set(layer, { sourceRef: topoSource, resolved: feature });
+      }
+    }
+
+    return cache.byLevel.get(level) || null;
+  }
 
   if (isTopoSource) {
     const level = _clampSimplifyLevel(simplifyLevel);
@@ -364,4 +407,46 @@ function _clampSimplifyLevel(value) {
     GEOJSON_LIMITS.simplifyLevel.min,
     Math.min(GEOJSON_LIMITS.simplifyLevel.max, Math.round(Number(value) || 0))
   );
+}
+
+function _resolveTopoObjectKey(topology, preferredName) {
+  const keys = Object.keys(topology?.objects || {});
+  if (!keys.length) return null;
+  if (preferredName && topology.objects?.[preferredName]) return preferredName;
+  const normalizedPreferred = String(preferredName || '').toLowerCase();
+  if (normalizedPreferred) {
+    const candidate = keys.find(key => String(key).toLowerCase() === normalizedPreferred);
+    if (candidate) return candidate;
+  }
+  return keys[0];
+}
+
+function _resolvePyramidTopologyForLevel(pyramidSource, simplifyLevel) {
+  const byLevel = pyramidSource?.topologiesByLevel;
+  if (!byLevel) return null;
+
+  const level = _clampSimplifyLevel(simplifyLevel);
+  if (byLevel instanceof Map) {
+    if (byLevel.has(level)) return byLevel.get(level);
+    for (let probe = level - 1; probe >= GEOJSON_LIMITS.simplifyLevel.min; probe -= 1) {
+      if (byLevel.has(probe)) return byLevel.get(probe);
+    }
+    for (let probe = level + 1; probe <= GEOJSON_LIMITS.simplifyLevel.max; probe += 1) {
+      if (byLevel.has(probe)) return byLevel.get(probe);
+    }
+    return null;
+  }
+
+  if (typeof byLevel === 'object') {
+    const exact = byLevel[level];
+    if (exact) return exact;
+    for (let probe = level - 1; probe >= GEOJSON_LIMITS.simplifyLevel.min; probe -= 1) {
+      if (byLevel[probe]) return byLevel[probe];
+    }
+    for (let probe = level + 1; probe <= GEOJSON_LIMITS.simplifyLevel.max; probe += 1) {
+      if (byLevel[probe]) return byLevel[probe];
+    }
+  }
+
+  return null;
 }

@@ -2,16 +2,27 @@ import { GEOJSON_LIMITS } from '../config.js';
 
 const PREFERRED_ADMIN_BOUNDARY_SOURCES = {
   Admin_0: {
-    url: 'data/maps/admin-boundaries/admin0.topo.json',
+    url: 'data/maps/GeoBoundaries/admin0.topo.json',
     objectName: 'admin0',
   },
   Admin_1: {
-    url: 'data/maps/admin-boundaries/admin1.topo.json',
+    url: 'data/maps/GeoBoundaries/admin1.topo.json',
     objectName: 'admin1',
   },
   Admin_2: {
-    url: 'data/maps/admin-boundaries/admin2.topo.json',
+    url: 'data/maps/GeoBoundaries/admin2.topo.json',
     objectName: 'admin2',
+  },
+};
+
+const COMBINED_ADMIN_BOUNDARY_PYRAMID = {
+  indexUrl: 'data/maps/GeoBoundaries/combined-pyramid-index.json',
+  basePath: 'data/maps/GeoBoundaries',
+  objectNames: {
+    Admin_0: 'admin0',
+    Admin_1: 'admin1',
+    Admin_2: 'admin2',
+    Land: 'land',
   },
 };
 
@@ -79,6 +90,7 @@ export function createDefaultGeojsonLayerBootstrap({
   const fetchFn = fetchImpl || fetch;
   let worldBankTopologyPromise = null;
   const preferredBoundaryTopologyPromises = new Map();
+  let combinedAdminPyramidPromise = null;
 
   async function loadWorldBankTopology() {
     if (!worldBankTopologyPromise) {
@@ -121,6 +133,55 @@ export function createDefaultGeojsonLayerBootstrap({
     };
   }
 
+  async function loadCombinedAdminBoundaryPyramid() {
+    if (!combinedAdminPyramidPromise) {
+      combinedAdminPyramidPromise = (async () => {
+        const indexResponse = await fetchFn(COMBINED_ADMIN_BOUNDARY_PYRAMID.indexUrl);
+        if (!indexResponse.ok) return null;
+        const index = await indexResponse.json();
+        const entries = Array.isArray(index?.levels) ? index.levels : [];
+        if (!entries.length) return null;
+
+        const byLevel = new Map();
+        for (const entry of entries) {
+          const level = Number(entry?.level);
+          const file = String(entry?.file || '').trim();
+          if (!Number.isFinite(level) || !file) continue;
+          const url = `${COMBINED_ADMIN_BOUNDARY_PYRAMID.basePath}/${file}`;
+          try {
+            const res = await fetchFn(url);
+            if (!res.ok) continue;
+            const topology = await res.json();
+            if (topology?.type === 'Topology') byLevel.set(level, topology);
+          } catch {
+            // Continue loading other levels if one file is unavailable.
+          }
+        }
+
+        return byLevel.size ? byLevel : null;
+      })().catch(() => null);
+    }
+    return combinedAdminPyramidPromise;
+  }
+
+  async function loadBoundarySource(boundaryKey) {
+    const pyramid = await loadCombinedAdminBoundaryPyramid();
+    if (pyramid) {
+      return {
+        _sxFormat: 'topojson-object-pyramid',
+        topologiesByLevel: pyramid,
+        objectName: COMBINED_ADMIN_BOUNDARY_PYRAMID.objectNames[boundaryKey] || boundaryKey,
+      };
+    }
+
+    const { topology, objectName } = await loadBoundaryTopology(boundaryKey);
+    return {
+      _sxFormat: 'topojson-object',
+      topology,
+      objectName,
+    };
+  }
+
   function hasNamedGeojsonLayer(nameKey) {
     return layers.some(l => l.type === layerTypes.GEOJSON && normalizedLayerName(l) === nameKey);
   }
@@ -150,12 +211,7 @@ export function createDefaultGeojsonLayerBootstrap({
   async function loadDefaultCountriesLayer() {
     if (hasNamedGeojsonLayer('countries')) return;
     try {
-      const { topology, objectName } = await loadBoundaryTopology('Admin_0');
-      const data = {
-        _sxFormat: 'topojson-object',
-        topology,
-        objectName,
-      };
+      const data = await loadBoundarySource('Admin_0');
       const layer = createLayer(layerTypes.GEOJSON, 'Countries', data);
       layer.style.fillOpacity = 0;
       layer.style.stroke = '#6a6a6a';
@@ -174,20 +230,12 @@ export function createDefaultGeojsonLayerBootstrap({
       { objectName: 'Admin_2', name: 'Admin2' },
     ];
 
-    let topology = null;
-
     for (const item of items) {
       const key = item.name.toLowerCase().replace(/[^a-z0-9]/g, '');
       if (hasNamedGeojsonLayer(key)) continue;
 
       try {
-        const loaded = await loadBoundaryTopology(item.objectName);
-        topology = loaded.topology;
-        const data = {
-          _sxFormat: 'topojson-object',
-          topology,
-          objectName: loaded.objectName,
-        };
+        const data = await loadBoundarySource(item.objectName);
         const layer = createLayer(layerTypes.GEOJSON, item.name, data);
         layer.visible = false;
         layer.style.fillOpacity = 0;
