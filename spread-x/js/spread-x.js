@@ -35,7 +35,7 @@ import { createBasemapStatusController } from './core/basemap-status-controller.
 import { createLayoutModeController } from './core/layout-mode-controller.js';
 import { createWelcomeOverlayController } from './core/welcome-overlay-controller.js';
 import { createImportUiController } from './core/import-ui-controller.js';
-import { createGeojsonFeatureInteractionController } from './core/geojson-feature-interaction-controller.js';
+import { createFeatureInteractionController } from './core/feature-interaction-controller.js';
 import {
   buildPresetFeatureLayers,
   groupPresetLayers,
@@ -55,7 +55,7 @@ import {
   countGeoJSONFeatures,
   resolveGeojsonAdaptiveDetailPercent,
   resolveLayerGeoJSON,
-} from './core/geojson-layer-utils.js';
+} from './core/vector-layer-utils.js';
 
 // ── Command definitions ──────────────────────────────────────────────────
 
@@ -177,7 +177,13 @@ export async function app(opts = {}) {
     const cached = _selectedGeojsonFeaturesCache.get(layer.id);
     if (cached?.dataRef === layer.data) return cached.cache;
 
-    const features = _extractGeojsonFeatures(layer.data);
+    const resolved = resolveLayerGeoJSON(layer, {
+      topojson,
+      resolvedCache: _settingsResolvedGeojsonCache,
+    });
+    if (!resolved) return null;
+
+    const features = _extractGeojsonFeatures(resolved);
     const byId = new Map();
     const nameById = new Map();
 
@@ -1983,7 +1989,7 @@ export async function app(opts = {}) {
   zoomBox.style.display = 'none';
   canvasWrapper?.appendChild(zoomBox);
 
-  const geojsonFeatureInteraction = createGeojsonFeatureInteractionController({
+  const geojsonFeatureInteraction = createFeatureInteractionController({
     canvasWrapper,
     d3,
     renderer,

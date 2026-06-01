@@ -15,7 +15,7 @@ import {
   getSimplifiedLayerData as _getSimplifiedLayerDataShared,
   resolveGeojsonSimplifyLevel as _resolveGeojsonSimplifyLevelShared,
   resolveLayerGeoJSON as _resolveLayerGeoJSONShared,
-} from './core/geojson-layer-utils.js';
+} from './core/vector-layer-utils.js';
 import {
   basemapOutlineIds as _basemapOutlineIds,
   chooseGeographicRasterPath as _chooseGeographicRasterPath,

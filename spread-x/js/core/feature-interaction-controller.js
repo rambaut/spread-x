@@ -1,4 +1,4 @@
-export function createGeojsonFeatureInteractionController({
+export function createFeatureInteractionController({
   canvasWrapper,
   d3,
   renderer,
@@ -148,3 +148,4 @@ export function createGeojsonFeatureInteractionController({
     zoomToSelectedFeatures,
   };
 }
+

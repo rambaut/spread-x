@@ -1,5 +1,5 @@
 import { countryFeatureId } from '../core/renderer-basemap-utils.js';
-import { analyzeTopojsonArcUsage, simplifyTopology } from '../core/geojson-layer-utils.js';
+import { analyzeTopojsonArcUsage, simplifyTopology } from '../core/topojson-utils.js';
 
 const _featurePartBoundsCache = new WeakMap();
 const _geometryComponentsCache = new WeakMap();

@@ -1,5 +1,5 @@
 import { countryFeatureId } from '../core/renderer-basemap-utils.js';
-import { analyzeTopojsonArcUsage } from '../core/geojson-layer-utils.js';
+import { analyzeTopojsonArcUsage } from '../core/topojson-utils.js';
 
 const BOUNDARY_LAYER_NAMES = new Set(['countries', 'admin0', 'admin1', 'admin2']);
 
