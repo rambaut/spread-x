@@ -44,6 +44,7 @@ import { CANVAS_TO_SVG_THRESHOLD } from './canvas-map-renderer.js';
 import {
   autoGeojsonRenderPolicy,
   countGeoJSONFeatures,
+  resolveGeojsonAdaptiveDetailPercent,
   resolveLayerGeoJSON,
 } from './core/geojson-layer-utils.js';
 
@@ -928,6 +929,19 @@ export async function app(opts = {}) {
     return Math.max(GEOJSON_LIMITS.detailPercent.min, Math.min(GEOJSON_LIMITS.detailPercent.max, detail));
   }
 
+  function _selectedLayerDetailPercent(selected, stats = null, zoomK = null) {
+    if (!selected || selected.type !== LAYER_TYPES.GEOJSON) return null;
+    if (selected.style?.adaptiveSimplify !== false) {
+      return resolveGeojsonAdaptiveDetailPercent({
+        zoomScale: _statusZoomK(zoomK),
+        targetZoom: selected.style?.detailZoom,
+      });
+    }
+    const simplifyLevel = Number(stats?.simplifyLevel);
+    if (!Number.isFinite(simplifyLevel)) return null;
+    return _simplifyLevelToDetailPercent(simplifyLevel);
+  }
+
   function _refreshRangeReadout(slider) {
     if (!slider) return;
     const row = slider.closest('.sx-setting-row');
@@ -945,9 +959,10 @@ export async function app(opts = {}) {
     if (selected.style?.adaptiveSimplify === false) return;
     const slider = $('set-gj-simplify');
     if (!slider) return;
-    const simplifyLevel = _currentGeojsonSimplifyLevel(selected);
-    if (!Number.isFinite(simplifyLevel)) return;
-    const detailPercent = _simplifyLevelToDetailPercent(simplifyLevel);
+    const detailPercent = resolveGeojsonAdaptiveDetailPercent({
+      zoomScale: _statusZoomK(),
+      targetZoom: selected.style?.detailZoom,
+    });
     if (Number(slider.value) === detailPercent) return;
     slider.value = String(detailPercent);
     _refreshRangeReadout(slider);
@@ -1357,9 +1372,12 @@ export async function app(opts = {}) {
       }
       const visible = stats.hiddenByZoom ? 0 : (Number.isFinite(+stats.renderedFeatures) ? +stats.renderedFeatures : 0);
       const total = Number.isFinite(+stats.totalFeatures) ? +stats.totalFeatures : 0;
-      const detailPercent = _simplifyLevelToDetailPercent(stats.simplifyLevel);
+      const detailPercent = _selectedLayerDetailPercent(selected, stats, zoomK);
+      const debugSuffix = selected?.style?.debugPerfStatus === true
+        ? _boundaryDebugStatusSuffix(stats)
+        : '';
       return {
-        text: `${selected.name || 'GeoJSON'}: objects ${visible}/${total}, detail ${detailPercent}%`,
+        text: `${selected.name || 'GeoJSON'}: objects ${visible}/${total}, detail ${detailPercent}%${debugSuffix}`,
         asHtml: false,
       };
     }
@@ -1373,6 +1391,21 @@ export async function app(opts = {}) {
     }
 
     return { text: `${selected.name || selected.type}: active`, asHtml: false };
+  }
+
+  function _boundaryDebugStatusSuffix(stats) {
+    const dbg = stats?.boundaryDebug;
+    if (!dbg) return '';
+    const parts = [` | dbg ${dbg.renderer || 'unknown'}`];
+    const sharedPct = Number(dbg?.topology?.sharedArcPct);
+    if (Number.isFinite(sharedPct)) parts.push(`shared ${sharedPct.toFixed(1)}%`);
+    const lineParts = Number(dbg?.lineParts);
+    if (Number.isFinite(lineParts)) parts.push(`parts ${lineParts}`);
+    const projectedSubpaths = Number(dbg?.projectedSubpaths);
+    if (Number.isFinite(projectedSubpaths)) parts.push(`subpaths ${projectedSubpaths}`);
+    const featurePaths = Number(dbg?.featurePaths);
+    if (Number.isFinite(featurePaths)) parts.push(`features ${featurePaths}`);
+    return `, ${parts.join(' ')}`;
   }
 
   function _perfDebugTargets() {
@@ -1454,6 +1487,7 @@ export async function app(opts = {}) {
       rendererFrameOverlayMs: Number.isFinite(+breakdown?.frameMs) ? +breakdown.frameMs : null,
       rendererLayerCount: Number.isFinite(+breakdown?.renderedLayerCount) ? +breakdown.renderedLayerCount : null,
       rendererTopLayers: Array.isArray(breakdown?.topLayers) ? breakdown.topLayers : null,
+      boundaryDebug: stats?.boundaryDebug || null,
       emittedAt: new Date(now).toISOString(),
     };
     _emitPerfDebug('stats', payload);

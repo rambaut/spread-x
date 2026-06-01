@@ -1,4 +1,23 @@
 import { countryFeatureId } from '../core/renderer-basemap-utils.js';
+import { analyzeTopojsonArcUsage } from '../core/geojson-layer-utils.js';
+
+const BOUNDARY_LAYER_NAMES = new Set(['countries', 'admin0', 'admin1', 'admin2']);
+
+function countBoundaryLinePartsFromFeatures(features) {
+  let count = 0;
+  for (const feature of features || []) {
+    const type = feature?.geometry?.type;
+    if (type === 'LineString') count += 1;
+    else if (type === 'MultiLineString') count += Array.isArray(feature?.geometry?.coordinates) ? feature.geometry.coordinates.length : 0;
+    else if (type === 'Polygon') count += Array.isArray(feature?.geometry?.coordinates) ? feature.geometry.coordinates.length : 0;
+    else if (type === 'MultiPolygon') {
+      count += Array.isArray(feature?.geometry?.coordinates)
+        ? feature.geometry.coordinates.reduce((sum, polygon) => sum + (Array.isArray(polygon) ? polygon.length : 0), 0)
+        : 0;
+    }
+  }
+  return count;
+}
 
 function geojsonFeatureRuntimeId(feature, index = -1) {
   const p = feature?.properties || {};
@@ -356,6 +375,11 @@ export function drawCanvasGeoJsonLayer({
   const perfStart = perfNow();
 
   const s = layer.style || {};
+  const normalizedLayerName = String(layer?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const isBoundaryLayer = BOUNDARY_LAYER_NAMES.has(normalizedLayerName);
+  const boundarySeamOverdrawPx = Number.isFinite(+s.boundarySeamOverdrawPx)
+    ? Math.max(0, +s.boundarySeamOverdrawPx)
+    : 0.35;
   const resolved = getSimplifiedLayerData(layer, 0);
   if (!resolved) return;
 
@@ -436,6 +460,18 @@ export function drawCanvasGeoJsonLayer({
     }
 
     if (s.stroke && s.stroke !== 'none' && s.strokeWidth > 0) {
+      if (isBoundaryLayer && boundarySeamOverdrawPx > 0) {
+        ctx.save();
+        ctx.beginPath();
+        ctxPath(fc);
+        ctx.strokeStyle = s.stroke;
+        ctx.lineWidth = (s.strokeWidth + boundarySeamOverdrawPx) / k;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        ctx.restore();
+      }
+
       ctx.save();
       ctx.beginPath();
       ctxPath(fc);
@@ -493,6 +529,13 @@ export function drawCanvasGeoJsonLayer({
     hiddenByZoom: false,
     capped,
     renderedVertexCount,
+    boundaryDebug: isBoundaryLayer ? {
+      renderer: 'canvas',
+      sourceFormat: layer?.data?._sxFormat || layer?.data?.type || null,
+      featurePaths: features.length,
+      lineParts: countBoundaryLinePartsFromFeatures(features),
+      topology: analyzeTopojsonArcUsage(layer),
+    } : null,
     timingsMs: {
       prep: Math.max(0, perfAfterPrep - perfStart),
       cull: Math.max(0, perfAfterCull - perfCullStart),

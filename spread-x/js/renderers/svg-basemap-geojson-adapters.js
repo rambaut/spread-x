@@ -1,4 +1,5 @@
 import { countryFeatureId } from '../core/renderer-basemap-utils.js';
+import { analyzeTopojsonArcUsage, simplifyTopology } from '../core/geojson-layer-utils.js';
 
 const _featurePartBoundsCache = new WeakMap();
 const _geometryComponentsCache = new WeakMap();
@@ -106,6 +107,19 @@ function _geometryPathCached(path, geometry, projectionStamp) {
   return d;
 }
 
+function _countSvgSubpaths(pathD) {
+  if (typeof pathD !== 'string' || !pathD) return 0;
+  const matches = pathD.match(/M/g);
+  return matches ? matches.length : 0;
+}
+
+function _countBoundaryLineParts(geometry) {
+  if (!geometry) return 0;
+  if (geometry.type === 'LineString') return 1;
+  if (geometry.type === 'MultiLineString') return Array.isArray(geometry.coordinates) ? geometry.coordinates.length : 0;
+  return 0;
+}
+
 function _decimateLineCoords(coords, stride) {
   if (!Array.isArray(coords) || coords.length <= 2 || stride <= 1) return coords;
   const out = [];
@@ -153,13 +167,14 @@ function _getBoundaryMeshGeometry(layer, topojson, prepareForSeamClipping, proje
   const cacheKey = `${objectName}:${projectionStamp}:${Math.max(0, Math.round(Number(simplifyLevel) || 0))}`;
   if (byTopology.has(cacheKey)) return byTopology.get(cacheKey);
 
-  const objects = topology.objects || {};
+  const level = Math.max(0, Math.round(Number(simplifyLevel) || 0));
+  const topologyForMesh = level > 0 ? simplifyTopology(topology, level) : topology;
+  const objects = topologyForMesh.objects || {};
   const object = objects[layer.data.objectName] || objects[Object.keys(objects)[0]];
   if (!object) return null;
 
-  const mesh = topojson.mesh(topology, object, (a, b) => a !== b);
-  const simplifiedMesh = _simplifyBoundaryMeshGeometry(mesh, simplifyLevel);
-  const prepared = prepareForSeamClipping ? prepareForSeamClipping(simplifiedMesh) : simplifiedMesh;
+  const mesh = topojson.mesh(topologyForMesh, object, (a, b) => a !== b);
+  const prepared = prepareForSeamClipping ? prepareForSeamClipping(mesh) : mesh;
   byTopology.set(cacheKey, prepared);
   return prepared;
 }
@@ -680,10 +695,15 @@ export function renderSvgGeoJsonLayer({
   const normalizedLayerName = String(layer?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const isBoundaryLayer = BOUNDARY_LAYER_NAMES.has(normalizedLayerName);
   const isOceansLayer = OCEAN_LAYER_NAMES.has(normalizedLayerName);
+  const boundarySeamOverdrawPx = Number.isFinite(+s.boundarySeamOverdrawPx)
+    ? Math.max(0, +s.boundarySeamOverdrawPx)
+    : 0.35;
   const layerFill = isBoundaryLayer ? 'none' : s.fill;
   const layerFillOpacity = isBoundaryLayer ? 0 : s.fillOpacity;
-  const layerStrokeLinecap = isBoundaryLayer ? 'butt' : 'round';
-  const layerStrokeLinejoin = isBoundaryLayer ? 'miter' : 'round';
+  // Boundary meshes are often emitted as many disjoint subpaths; round caps/joins
+  // mask tiny rasterization gaps at subpath seams.
+  const layerStrokeLinecap = 'round';
+  const layerStrokeLinejoin = 'round';
   const resolved = getSimplifiedLayerData(layer, 0);
   if (!resolved) return;
 
@@ -694,25 +714,7 @@ export function renderSvgGeoJsonLayer({
     featureCount: rawFeatures.length,
     style: s,
   }) ?? Math.max(0, Math.min(12, Math.round(Number(s.simplify ?? 0))));
-  const adaptiveEnabled = s.adaptiveSimplify !== false;
   let effectiveSimplifyLevel = simplifyLevel;
-  if (!adaptiveEnabled) {
-    if (isBoundaryLayer && zoomT.k >= 20) {
-      effectiveSimplifyLevel = Math.max(effectiveSimplifyLevel, 5);
-    }
-    if (isBoundaryLayer && zoomT.k >= 35) {
-      effectiveSimplifyLevel = Math.max(effectiveSimplifyLevel, 7);
-    }
-    if (isOceansLayer && zoomT.k >= 8) {
-      effectiveSimplifyLevel = Math.max(effectiveSimplifyLevel, 8);
-    }
-    if (isOceansLayer && zoomT.k >= 20) {
-      effectiveSimplifyLevel = Math.max(effectiveSimplifyLevel, 10);
-    }
-    if (isOceansLayer && zoomT.k >= 30) {
-      effectiveSimplifyLevel = Math.max(effectiveSimplifyLevel, 12);
-    }
-  }
 
   const prepared = getPreparedLayerData
     ? getPreparedLayerData(layer, effectiveSimplifyLevel)
@@ -793,10 +795,35 @@ export function renderSvgGeoJsonLayer({
     if (boundaryMesh) {
       const perfAfterCull = perfNow();
       const perfDrawStart = perfNow();
+      const boundaryPathD = _geometryPathCached(path, boundaryMesh, projectionStamp);
+      const topologyDebug = analyzeTopojsonArcUsage(layer);
+      const boundaryDebug = {
+        renderer: 'svg',
+        sourceFormat: layer?.data?._sxFormat || layer?.data?.type || null,
+        geometryType: boundaryMesh.type || null,
+        lineParts: _countBoundaryLineParts(boundaryMesh),
+        projectedSubpaths: _countSvgSubpaths(boundaryPathD),
+        stitchApplied: false,
+        renderStrategy: 'mesh',
+        topology: topologyDebug,
+      };
+
+      if (s.stroke && s.stroke !== 'none' && s.strokeWidth > 0 && boundarySeamOverdrawPx > 0) {
+        g.append('path')
+          .datum(boundaryMesh)
+          .attr('class', 'borders-seam-fix')
+          .attr('d', boundaryPathD)
+          .attr('fill', 'none')
+          .attr('stroke', s.stroke)
+          .attr('stroke-width', (Number(s.strokeWidth) || 0) + boundarySeamOverdrawPx)
+          .attr('vector-effect', 'non-scaling-stroke')
+          .attr('stroke-linejoin', layerStrokeLinejoin)
+          .attr('stroke-linecap', layerStrokeLinecap);
+      }
 
       g.append('path')
         .datum(boundaryMesh)
-        .attr('d', _geometryPathCached(path, boundaryMesh, projectionStamp))
+        .attr('d', boundaryPathD)
         .attr('fill', 'none')
         .attr('stroke', s.stroke)
         .attr('stroke-width', s.strokeWidth)
@@ -851,6 +878,7 @@ export function renderSvgGeoJsonLayer({
         partCullChecked: 0,
         partCullApplied: 0,
         renderedVertexCount: _countGeometryVertices(boundaryMesh),
+        boundaryDebug,
         timingsMs: {
           prep: Math.max(0, perfAfterPrep - perfStart),
           cull: Math.max(0, perfAfterCull - perfAfterPrep),
@@ -918,7 +946,9 @@ export function renderSvgGeoJsonLayer({
   let perfAfterDraw = perfAfterCull;
   if (features.length) {
     const perfDrawStart = perfNow();
-    const useBatchedPath = !isBoundaryLayer && (features.length > 250 || renderedVertexCount > 250000);
+    // Fill adjacent polygons as one compound path to avoid anti-alias seams.
+    const hasFill = !!(layerFill && layerFill !== 'none' && (layerFillOpacity ?? 1) > 0);
+    const useBatchedPath = !isBoundaryLayer && (hasFill || features.length > 250 || renderedVertexCount > 250000);
 
     if (useBatchedPath) {
       g.append('path')

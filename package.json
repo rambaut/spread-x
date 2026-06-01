@@ -7,6 +7,9 @@
     "pearcore",
     "spread-x"
   ],
+  "scripts": {
+    "build:admin-topology": "bash scripts/build-admin-topology.sh"
+  },
   "devDependencies": {
   }
 }

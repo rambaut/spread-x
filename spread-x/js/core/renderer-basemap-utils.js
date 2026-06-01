@@ -94,6 +94,17 @@ export function prepareForSeamClipping(geometry, { d3, projId } = {}) {
   const needsStitch = isProjectionDiscontinuous(projId) || projId === 'geoEquirectangular';
   if (!needsStitch) return geometry;
   if (!geometry || typeof d3?.geoStitch !== 'function') return geometry;
+
+  // geoStitch is intended for polygon seam repair; applying it to line meshes
+  // can create tiny discontinuities in boundary arcs.
+  const geometryType = geometry?.type;
+  const isPolygonal = geometryType === 'Polygon'
+    || geometryType === 'MultiPolygon'
+    || geometryType === 'Feature'
+    || geometryType === 'FeatureCollection'
+    || geometryType === 'GeometryCollection';
+  if (!isPolygonal) return geometry;
+
   try {
     return d3.geoStitch(geometry);
   } catch {

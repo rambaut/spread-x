@@ -158,7 +158,7 @@ export function populateSettingsForLayer({
         const simplifyLevel = adaptive
           ? (Number.isFinite(liveSimplify)
               ? liveSimplify
-              : (Number.isFinite(+s.maxSimplify) ? +s.maxSimplify : 4))
+              : (Number.isFinite(+s.maxSimplify) ? +s.maxSimplify : GEOJSON_LIMITS.simplifyLevel.max))
           : (Number.isFinite(+s.simplify) ? +s.simplify : GEOJSON_LIMITS.simplifyLevel.defaultValue);
         const detailPercent = _simplifyLevelToDetailPercent(simplifyLevel);
         getEl('set-gj-simplify').value = detailPercent;

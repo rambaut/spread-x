@@ -19,11 +19,11 @@ export const RENDERER_MODE_LIMITS = {
 export const GEOJSON_LIMITS = {
   simplifyLevel: {
     min: 0,
-    max: 12,
+    max: 10,
     defaultValue: 0,
   },
   detailPercent: {
-    min: 1,
+    min: 0,
     max: 100,
     defaultValue: 100,
   },

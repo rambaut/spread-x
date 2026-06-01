@@ -128,7 +128,7 @@ const DEFAULT_STYLES = {
     adaptiveSimplify: true,
     simplify:    GEOJSON_LIMITS.simplifyLevel.defaultValue,
     minSimplify: GEOJSON_LIMITS.simplifyLevel.defaultValue,
-    maxSimplify: 4,
+    maxSimplify: GEOJSON_LIMITS.simplifyLevel.max,
     detailZoom:  GEOJSON_LIMITS.targetZoom.defaultValue,
     debugPerfStatus: false,
   },

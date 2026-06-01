@@ -1,5 +1,16 @@
 import { GEOJSON_LIMITS } from '../config.js';
 
+const _topologyArcUsageCache = new WeakMap();
+
+export function resolveGeojsonAdaptiveDetailPercent({ zoomScale = 1, targetZoom = GEOJSON_LIMITS.targetZoom.defaultValue } = {}) {
+  const z = Math.max(1, Number(zoomScale) || 1);
+  const target = Math.max(GEOJSON_LIMITS.targetZoom.min, Number(targetZoom) || GEOJSON_LIMITS.targetZoom.defaultValue);
+  if (z <= 1) return 0;
+  if (z >= target) return 100;
+  const t = Math.max(0, Math.min(1, Math.log2(z) / Math.log2(Math.max(1.000001, target))));
+  return Math.round(t * 100);
+}
+
 export function countGeoJSONFeatures(data) {
   if (!data) return 0;
   if (data.type === 'FeatureCollection') return data.features?.length || 0;
@@ -36,6 +47,44 @@ export function getSimplifiedLayerData(layer, simplifyLevel, {
   resolvedCache,
   layerCache,
 } = {}) {
+  const topoSource = layer?.data;
+  const isTopoSource = topoSource?._sxFormat === 'topojson-object'
+    && topoSource?.topology?.type === 'Topology'
+    && topojson?.feature;
+
+  if (isTopoSource) {
+    const level = _clampSimplifyLevel(simplifyLevel);
+    let cache = layerCache?.get(layer);
+    if (!cache || cache.sourceRef !== topoSource) {
+      cache = {
+        sourceRef: topoSource,
+        byLevel: new Map(),
+      };
+      layerCache?.set(layer, cache);
+    }
+
+    if (!cache.byLevel.has(level)) {
+      const topology = topoSource.topology;
+      const keys = Object.keys(topology.objects || {});
+      const key = topoSource.objectName && topology.objects?.[topoSource.objectName]
+        ? topoSource.objectName
+        : keys[0];
+      if (!key) return null;
+
+      const topologyForLevel = level > 0
+        ? simplifyTopology(topology, level)
+        : topology;
+
+      const feature = topojson.feature(topologyForLevel, topologyForLevel.objects[key]);
+      cache.byLevel.set(level, feature);
+      if (level === 0) {
+        resolvedCache?.set(layer, { sourceRef: topoSource, resolved: feature });
+      }
+    }
+
+    return cache.byLevel.get(level) || null;
+  }
+
   const resolved = resolveLayerGeoJSON(layer, { topojson, resolvedCache });
   if (!resolved || simplifyLevel <= 0) return resolved;
 
@@ -59,6 +108,131 @@ export function getSimplifiedLayerData(layer, simplifyLevel, {
   return cache.byLevel.get(level) || resolved;
 }
 
+export function simplifyTopology(topology, simplifyLevel) {
+  if (!topology || topology.type !== 'Topology' || simplifyLevel <= 0) return topology;
+  const stride = Math.max(2, Math.round(Number(simplifyLevel) || 0) + 1);
+  const hasTransform = !!topology.transform;
+  const arcs = Array.isArray(topology.arcs)
+    ? topology.arcs.map(arc => _simplifyTopologyArc(arc, stride, hasTransform))
+    : topology.arcs;
+  return {
+    ...topology,
+    arcs,
+  };
+}
+
+export function analyzeTopojsonArcUsage(layer) {
+  const topoSource = layer?.data;
+  if (topoSource?._sxFormat !== 'topojson-object') return null;
+
+  const topology = topoSource.topology;
+  if (!topology || topology.type !== 'Topology') return null;
+
+  let byObjectName = _topologyArcUsageCache.get(topology);
+  if (!byObjectName) {
+    byObjectName = new Map();
+    _topologyArcUsageCache.set(topology, byObjectName);
+  }
+
+  const objectName = topoSource.objectName || Object.keys(topology.objects || {})[0] || '__first';
+  if (byObjectName.has(objectName)) return byObjectName.get(objectName);
+
+  const object = topology.objects?.[objectName] || topology.objects?.[Object.keys(topology.objects || {})[0]];
+  if (!object) return null;
+
+  const counts = new Map();
+  const state = { totalArcRefs: 0, geometryCount: 0 };
+  _collectTopoObjectArcRefs(object, counts, state);
+
+  let sharedArcRefs = 0;
+  let sharedArcUseCount = 0;
+  for (const count of counts.values()) {
+    if (count > 1) {
+      sharedArcRefs += 1;
+      sharedArcUseCount += count;
+    }
+  }
+
+  const result = {
+    objectName,
+    geometryCount: state.geometryCount,
+    totalArcRefs: state.totalArcRefs,
+    uniqueArcRefs: counts.size,
+    sharedArcRefs,
+    sharedArcUseCount,
+    sharedArcPct: counts.size > 0 ? Math.round((sharedArcRefs / counts.size) * 1000) / 10 : 0,
+  };
+  byObjectName.set(objectName, result);
+  return result;
+}
+
+function _simplifyTopologyArc(arc, stride, isDeltaEncoded) {
+  if (!Array.isArray(arc) || arc.length <= 2 || stride <= 1) return arc;
+
+  const absolute = isDeltaEncoded ? _decodeDeltaArc(arc) : arc;
+  const simplifiedAbsolute = decimateLine(absolute, stride, false);
+
+  return isDeltaEncoded
+    ? _encodeDeltaArc(simplifiedAbsolute)
+    : simplifiedAbsolute;
+}
+
+function _decodeDeltaArc(arc) {
+  let x = 0;
+  let y = 0;
+  const out = [];
+  for (const point of arc) {
+    if (!Array.isArray(point) || point.length < 2) continue;
+    x += Number(point[0]) || 0;
+    y += Number(point[1]) || 0;
+    out.push([x, y]);
+  }
+  return out;
+}
+
+function _encodeDeltaArc(points) {
+  const out = [];
+  let prevX = 0;
+  let prevY = 0;
+  for (const point of points || []) {
+    if (!Array.isArray(point) || point.length < 2) continue;
+    const x = Number(point[0]) || 0;
+    const y = Number(point[1]) || 0;
+    out.push([x - prevX, y - prevY]);
+    prevX = x;
+    prevY = y;
+  }
+  return out;
+}
+
+function _collectTopoObjectArcRefs(object, counts, state) {
+  if (!object) return;
+  const type = object.type;
+  if (type === 'GeometryCollection') {
+    for (const geometry of object.geometries || []) {
+      _collectTopoObjectArcRefs(geometry, counts, state);
+    }
+    return;
+  }
+
+  state.geometryCount += 1;
+  _collectArcIndexes(object.arcs, counts, state);
+}
+
+function _collectArcIndexes(arcs, counts, state) {
+  if (typeof arcs === 'number' && Number.isInteger(arcs)) {
+    const arcIndex = arcs >= 0 ? arcs : ~arcs;
+    counts.set(arcIndex, (counts.get(arcIndex) || 0) + 1);
+    state.totalArcRefs += 1;
+    return;
+  }
+
+  if (!Array.isArray(arcs)) return;
+  for (const value of arcs) {
+    _collectArcIndexes(value, counts, state);
+  }
+}
+
 export function resolveGeojsonSimplifyLevel({ zoomScale = 1, featureCount = 0, style = {} } = {}) {
   const manualLevel = _clampSimplifyLevel(style.simplify ?? 0);
   if (style.adaptiveSimplify === false) return manualLevel;
@@ -71,24 +245,25 @@ export function resolveGeojsonSimplifyLevel({ zoomScale = 1, featureCount = 0, s
       : featureCount > 400
         ? 3
         : 2;
-  const maxSimplify = Math.max(minSimplify, _clampSimplifyLevel(style.maxSimplify ?? autoMax));
+  // In adaptive mode, always allow the full configured simplify span so
+  // rendered detail follows zoom even for layers persisted with older,
+  // lower maxSimplify values.
+  const adaptiveMax = GEOJSON_LIMITS.simplifyLevel.max;
+  const maxSimplify = Math.max(minSimplify, _clampSimplifyLevel(adaptiveMax ?? style.maxSimplify ?? autoMax));
   const detailZoom = Math.max(
     GEOJSON_LIMITS.targetZoom.min,
     Number(style.detailZoom) || GEOJSON_LIMITS.targetZoom.defaultValue
   );
 
-  const z = Math.max(1, Number(zoomScale) || 1);
-  // At and beyond target zoom, cap at the highest detail (lowest simplify).
-  if (z >= detailZoom) return minSimplify;
+  const detailPercent = resolveGeojsonAdaptiveDetailPercent({
+    zoomScale,
+    targetZoom: detailZoom,
+  });
 
-  const zCurve = Math.log2(Math.max(1, z));
-  const targetCurve = Math.log2(Math.max(1.000001, detailZoom));
-  const t = Math.max(0, Math.min(1, zCurve / targetCurve));
-  // Reverse smoothstep over a log2 zoom curve: each zoom doubling advances
-  // simplification by a similar visual amount.
-  const eased = 1 - (t * t * (3 - (2 * t)));
-  const adaptive = _clampSimplifyLevel(Math.round(minSimplify + ((maxSimplify - minSimplify) * eased)));
-  return adaptive;
+  const simplifySpan = maxSimplify - minSimplify;
+  if (simplifySpan <= 0) return minSimplify;
+  const simplifyLevel = Math.round(maxSimplify - ((detailPercent / 100) * simplifySpan));
+  return _clampSimplifyLevel(simplifyLevel);
 }
 
 export function geojsonRenderPolicy(featureCount, style = {}) {
