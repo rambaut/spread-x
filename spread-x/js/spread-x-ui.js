@@ -357,7 +357,7 @@ function _buildSettingsPanel() {
       </div>
       </div>
 
-      <div id="settings-bm-geographic-group" style="display:none">
+      <div id="settings-bm-geographic-group" class="pt-palette-grid" style="display:none">
         <hr />
         <h3><i class="bi bi-map"></i> Natural Earth Geographic</h3>
         <div class="pt-palette-row" title="Geographic coordinate reference system">
