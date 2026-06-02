@@ -10,7 +10,7 @@ import { createCommands } from '@artic-network/pearcore/commands.js';
 import { createGraphicsExporter } from '@artic-network/pearcore/graphics-export.js';
 import {
   createSidePanelController,
-  initAccordionSections,
+  initSectionAccordion,
   loadSettings,
   saveSettings as _saveSettings,
 } from '@artic-network/pearcore/pearcore-app.js';
@@ -710,7 +710,7 @@ export async function app(opts = {}) {
   const layerPanel  = $('layer-panel');
   const layerList   = $('layer-list');
   const settingsPanel = $('settings-panel');
-  const settingsPanelBody = $('settings-panel-body');
+  const settingsPanelBody = $('palette-panel-body') || $('settings-panel-body');
   const leftPanelOpenKey = storageKey ? `${storageKey}.panel-left-open` : null;
   const rightPanelOpenKey = storageKey ? `${storageKey}.panel-right-open` : null;
 
@@ -740,8 +740,8 @@ export async function app(opts = {}) {
   const layerPanelController = createSidePanelController({
     panel: layerPanel,
     toggleButton: $('btn-layers'),
-    closeButton: $('btn-layer-close'),
-    pinButton: $('btn-layer-pin'),
+    closeButton: $('btn-palette-close-left') || $('btn-layer-close'),
+    pinButton: $('btn-palette-pin-left') || $('btn-layer-pin'),
     bodyEl: document.body,
     windowRef: window,
     storageKey: storageKey ? `${storageKey}.panel-left-pinned` : null,
@@ -751,8 +751,8 @@ export async function app(opts = {}) {
   });
   layerPanelController.bindUI({
     toggleButton: $('btn-layers'),
-    closeButton: $('btn-layer-close'),
-    pinButton: $('btn-layer-pin'),
+    closeButton: $('btn-palette-close-left') || $('btn-layer-close'),
+    pinButton: $('btn-palette-pin-left') || $('btn-layer-pin'),
   });
   layerPanelController.onChange((isOpen) => {
     _writePanelOpenPref(leftPanelOpenKey, isOpen);
@@ -761,8 +761,8 @@ export async function app(opts = {}) {
   const settingsPanelController = createSidePanelController({
     panel: settingsPanel,
     toggleButton: $('btn-settings'),
-    closeButton: $('btn-settings-close'),
-    pinButton: $('btn-settings-pin'),
+    closeButton: $('btn-palette-close') || $('btn-settings-close'),
+    pinButton: $('btn-palette-pin') || $('btn-settings-pin'),
     bodyEl: document.body,
     windowRef: window,
     storageKey: storageKey ? `${storageKey}.panel-right-pinned` : null,
@@ -772,19 +772,62 @@ export async function app(opts = {}) {
   });
   settingsPanelController.bindUI({
     toggleButton: $('btn-settings'),
-    closeButton: $('btn-settings-close'),
-    pinButton: $('btn-settings-pin'),
+    closeButton: $('btn-palette-close') || $('btn-settings-close'),
+    pinButton: $('btn-palette-pin') || $('btn-settings-pin'),
   });
   settingsPanelController.onChange((isOpen) => {
     _writePanelOpenPref(rightPanelOpenKey, isOpen);
   });
 
-  const settingsAccordion = initAccordionSections(settingsPanelBody, {
-    sectionSelector: '.sx-settings-section',
-    headerSelector: ':scope > h3',
-    storageKey: `${storageKey}.settings-accordion`,
-    defaultOpenSectionId: 'settings-basemap',
+  function _adoptPearcoreToolPalette(rootEl) {
+    if (!rootEl) return;
+
+    for (const section of rootEl.querySelectorAll('.sx-settings-section')) {
+      section.classList.add('pt-palette-section');
+      section.classList.remove('sx-settings-section');
+    }
+    for (const row of rootEl.querySelectorAll('.sx-setting-row')) {
+      row.classList.add('pt-palette-row');
+      row.classList.remove('sx-setting-row');
+    }
+    for (const lbl of rootEl.querySelectorAll('label')) {
+      lbl.classList.add('pt-palette-label');
+    }
+    for (const val of rootEl.querySelectorAll('.sx-setting-value')) {
+      val.classList.add('pt-val');
+      val.classList.remove('sx-setting-value');
+    }
+    for (const sel of rootEl.querySelectorAll('select.form-select')) {
+      sel.classList.add('pt-palette-select');
+    }
+  }
+
+  _adoptPearcoreToolPalette(settingsPanelBody);
+
+  const settingsAccordion = initSectionAccordion(settingsPanel, {
+    storageKey: storageKey ? `${storageKey}.settings-sections` : 'spread-x.settings-sections',
+    defaultSectionId: 'base-map',
   });
+  settingsAccordion.unlock();
+
+  function _ensureSettingsSectionOpen(preferredSection) {
+    if (!settingsPanelBody) return;
+    const sections = [...settingsPanelBody.querySelectorAll('.pt-palette-section')]
+      .filter(sec => sec.style.display !== 'none');
+    if (sections.length === 0) return;
+
+    const candidate = (preferredSection && sections.includes(preferredSection))
+      ? preferredSection
+      : sections[0];
+
+    for (const sec of sections) {
+      if (sec === candidate || sec.classList.contains('pt-palette-section--pinned')) continue;
+      sec.classList.remove('pt-palette-section--open');
+    }
+    if (!candidate.classList.contains('pt-palette-section--pinned')) {
+      candidate.classList.add('pt-palette-section--open');
+    }
+  }
 
   _upgradeSettingsColourPickers();
   _installSliderReadouts();
@@ -832,7 +875,7 @@ export async function app(opts = {}) {
     if (!settingsPanelBody) return;
     const ranges = settingsPanelBody.querySelectorAll('input.form-range[type="range"]');
     for (const slider of ranges) {
-      const row = slider.closest('.sx-setting-row');
+      const row = slider.closest('.sx-setting-row, .pt-palette-row');
       if (!row || row.querySelector('.sx-range-value')) continue;
       row.classList.add('has-range');
       const out = document.createElement('span');
@@ -1850,7 +1893,8 @@ export async function app(opts = {}) {
     if (note) note.style.display = readOnly ? '' : 'none';
     if (readOnlyPanel) readOnlyPanel.style.display = readOnly ? '' : 'none';
 
-    for (const child of sec.children) {
+    const sectionInner = sec.querySelector(':scope > .pt-section-body > .pt-section-body-inner') || sec;
+    for (const child of sectionInner.children) {
       if (child.id === 'settings-basemap-layout-note') continue;
       if (child.id === 'settings-basemap-readonly') continue;
       if (child.tagName === 'H3') continue;
@@ -1904,7 +1948,7 @@ export async function app(opts = {}) {
     });
     _syncBasemapLayoutLockUI(layer);
     if (layer.type === LAYER_TYPES.BASEMAP) _updateBasemapReadonlyPanel();
-    settingsAccordion.refresh({ defaultOpenSectionId: `settings-${layer.type}` });
+    _ensureSettingsSectionOpen(sec);
     _syncDebugPerfStatusButton();
   }
 
@@ -2590,7 +2634,6 @@ export async function app(opts = {}) {
   // ── Initial render ───────────────────────────────────────────────────
   _renderLayerList();
   _showSettingsForLayer(selectedId);
-  settingsAccordion.refresh({ defaultOpenSectionId: 'settings-basemap' });
   await _render();
   if (!_layoutMode) {
     const t = renderer.getZoomTransform?.();
