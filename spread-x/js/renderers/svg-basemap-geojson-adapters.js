@@ -389,7 +389,8 @@ export async function renderSvgBasemapLayer({
   const showCountryBoundaries = showGlobe && s.showCountryBoundaries !== false;
   const landBoundaryStroke = s.landBoundaryStroke || s.landStroke || '#4a8a5a';
   const landBoundaryWidth = s.landBoundaryWidth ?? s.landStrokeWidth ?? 0.5;
-  const showProjectionBoundary = s.showGraticule !== false;
+  const showGraticule = layer?.runtime?.showBasemapGraticule !== false && s.showGraticule !== false;
+  const showProjectionBoundary = showGraticule;
 
   g.append('path')
     .attr('class', 'basemap-sphere')
@@ -402,7 +403,7 @@ export async function renderSvgBasemapLayer({
     .attr('stroke-linejoin', 'round')
     .attr('stroke-linecap', 'round');
 
-  if (s.showGraticule) {
+  if (showGraticule) {
     const step = s.graticuleStep || 10;
     const projection = typeof path.projection === 'function' ? path.projection() : null;
     const canTunePrecision = !!projection && typeof projection.precision === 'function';
@@ -541,7 +542,8 @@ export async function renderSvgGeographicBasemapLayer({
   const zoomK = currentTransform?.k || 1;
   const sourceType = s.geographicSourceType || 'raster';
   const oceanFill = s.geographicOceanFill || s.oceanFill || '#0d2f40';
-  const showProjectionBoundary = s.showGraticule !== false;
+  const showGraticule = layer?.runtime?.showBasemapGraticule !== false && s.showGraticule !== false;
+  const showProjectionBoundary = showGraticule;
 
   g.append('path')
     .datum({ type: 'Sphere' })

@@ -530,10 +530,18 @@ body.layout-mode .sx-layer-add-row {
   position: absolute;
   top: 0;
   left: 0;
+  cursor: default;
+}
+
+#canvas-wrapper.sx-space-pan-ready #map-svg,
+#canvas-wrapper.sx-space-pan-ready #map-canvas {
   cursor: grab;
 }
-#map-svg:active,
-#map-canvas:active { cursor: grabbing; }
+
+#canvas-wrapper.sx-space-pan-dragging #map-svg,
+#canvas-wrapper.sx-space-pan-dragging #map-canvas {
+  cursor: grabbing;
+}
 
 .sx-zoom-box {
   position: absolute;

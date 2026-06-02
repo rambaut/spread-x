@@ -200,6 +200,24 @@ def create_land_geojson(src_admin0: Path, tmp_dir: Path) -> Path:
     return land_geojson
 
 
+def build_land_topology(src_admin0: Path, tmp_dir: Path, out_dir: Path) -> None:
+    land_geojson = create_land_geojson(src_admin0, tmp_dir)
+    land_topology = out_dir / "land.topo.json"
+    print(f"Building {land_topology} from {land_geojson}")
+    run_command(
+        [
+            "mapshaper",
+            str(land_geojson),
+            "-clean",
+            "-snap",
+            "interval=1e-7",
+            "-o",
+            "format=topojson",
+            str(land_topology),
+        ]
+    )
+
+
 def build_combined_base(
     src_dir: Path,
     tmp_dir: Path,
@@ -391,6 +409,9 @@ def main() -> int:
         built_features = build_individual_topologies(src_dir, output_folder, features)
         if not built_features:
             raise RuntimeError("No requested source feature files were found. Nothing to build.")
+
+        if "admin0" in built_features:
+            build_land_topology(src_dir / "admin0.geojson", tmp_dir, output_folder)
 
         base_file, layer_names = build_combined_base(src_dir, tmp_dir, output_folder, features)
         level_entries = build_pyramid_levels(base_file, output_folder, levels)

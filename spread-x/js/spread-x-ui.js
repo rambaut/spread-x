@@ -298,6 +298,10 @@ function _buildSettingsPanel() {
         <input type="range" id="set-bm-grat-opacity" class="form-range" min="0" max="100" step="1" value="10" />
       </div>
       <div class="sx-setting-row">
+        <label for="set-bm-grat-hide-zoom">Hide reticule in view mode at zoom</label>
+        <input type="range" id="set-bm-grat-hide-zoom" class="form-range" min="1" max="12" step="0.25" value="12" />
+      </div>
+      <div class="sx-setting-row">
         <label for="set-bm-proj-boundary">Boundary</label>
         <input type="color" id="set-bm-proj-boundary" class="pt-palette-color" value="#4a8a5a" />
       </div>
@@ -308,10 +312,8 @@ function _buildSettingsPanel() {
       <hr />
       <h3><i class="bi bi-globe-americas"></i> Features</h3>
       <div class="sx-setting-row">
-        <label>
-          <input type="checkbox" id="set-bm-features-layout-only" class="form-check-input" />
-          Layout only (hide in View mode)
-        </label>
+        <label for="set-bm-features-hide-zoom">Hide features in view mode at zoom</label>
+        <input type="range" id="set-bm-features-hide-zoom" class="form-range" min="1" max="12" step="0.25" value="12" />
       </div>
       <div class="sx-setting-row">
         <label>
@@ -469,6 +471,18 @@ function _buildSettingsPanel() {
     <!-- ── Style ── -->
     <div id="settings-geojson" class="sx-settings-section" style="display:none">
       <h3><i class="bi bi-hexagon"></i> Style</h3>
+      <div class="sx-setting-row">
+        <label>
+          <input type="checkbox" id="set-gj-hover-on" class="form-check-input" checked />
+          Hover features
+        </label>
+      </div>
+      <div class="sx-setting-row">
+        <label>
+          <input type="checkbox" id="set-gj-select-on" class="form-check-input" checked />
+          Select features
+        </label>
+      </div>
       <div class="sx-setting-row">
         <label for="set-gj-fill">Fill</label>
         <input type="color" id="set-gj-fill" class="pt-palette-color" value="#2aa198" />

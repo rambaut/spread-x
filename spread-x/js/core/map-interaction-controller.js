@@ -9,8 +9,11 @@ export function createMapInteractionController({
   zoomBox,
   getBasemapCenter,
   isEditableTarget,
-  isCountryHoverEnabled,
+  isFeatureHoverEnabled,
+  isFeatureSelectEnabled,
+  isFeatureInteractionEnabled,
   hitTestCountryFromPointerEvent,
+  zoomToFeatureIds,
   zoomToSelectedCountries,
   syncBasemapCountryInteractionRuntime,
   updateCountryStatusBar,
@@ -25,6 +28,7 @@ export function createMapInteractionController({
   let spaceHeld = false;
   let cmdZoomDragging = false;
   let projectionDragging = false;
+  let projectionDragMode = null;
   let lastDragX = 0;
   let lastDragY = 0;
   let cmdZoomStartX = 0;
@@ -55,6 +59,13 @@ export function createMapInteractionController({
     const on = !!ready && !spaceHeld;
     canvasWrapper.classList.toggle('sx-alt-zoom-ready', on);
     canvasWrapper.classList.toggle('sx-alt-zoom-dragging', on && !!dragging);
+  }
+
+  function setSpacePanCursorState(ready, dragging = false) {
+    if (!canvasWrapper) return;
+    const on = !!ready;
+    canvasWrapper.classList.toggle('sx-space-pan-ready', on);
+    canvasWrapper.classList.toggle('sx-space-pan-dragging', on && !!dragging);
   }
 
   function toLocalPoint(e) {
@@ -112,15 +123,40 @@ export function createMapInteractionController({
     queueRender();
   }
 
+  function zoomInOnPointerEvent(e, factor = 2) {
+    const p = toLocalPoint(e);
+    if (!p) return;
+
+    const t = renderer.getZoomTransform();
+    const currentK = Number.isFinite(t?.k) && t.k > 0 ? t.k : 1;
+    const nextK = Math.max(0.5, Math.min(200, currentK * factor));
+    const worldX = (p.x - t.x) / currentK;
+    const worldY = (p.y - t.y) / currentK;
+    const targetX = (p.x) - (worldX * nextK);
+    const targetY = (p.y) - (worldY * nextK);
+
+    const target = constrainViewModeTransform(d3.zoomIdentity.translate(targetX, targetY).scale(nextK));
+    mapViewport.withSuppressedHistory(() => {
+      renderer.syncZoomTransform(target);
+    });
+    recordZoomTransform(target, { immediate: true });
+    updateSelectedGeoJSONStatus(target.k);
+    queueRender();
+  }
+
   function formatCoord(v, posLabel, negLabel) {
     const abs = Math.abs(Number(v) || 0).toFixed(2);
     return `${abs}${v >= 0 ? posLabel : negLabel}`;
   }
 
-  function setSpaceHint(lonOnly = false) {
+  function setSpaceHint(lonOnly = false, mode = 'view') {
     if (!statusStats) return;
+    if (mode !== 'projection') {
+      statusStats.textContent = 'Space-drag: pan view | Shift+Space-drag: move projection';
+      return;
+    }
     const [lon, lat] = getBasemapCenter();
-    statusStats.textContent = `Space-drag${lonOnly ? ' (lon only)' : ''}: center ${formatCoord(lat, 'N', 'S')} ${formatCoord(lon, 'E', 'W')}`;
+    statusStats.textContent = `Shift+Space-drag${lonOnly ? ' (lon only)' : ''}: center ${formatCoord(lat, 'N', 'S')} ${formatCoord(lon, 'E', 'W')}`;
   }
 
   function restoreStatusAfterSpaceHint() {
@@ -138,8 +174,9 @@ export function createMapInteractionController({
     e.preventDefault();
     spaceHeld = true;
     setAltZoomCursorState(false, false);
+    setSpacePanCursorState(true, false);
     renderer.setSpacePanActive(true);
-    setSpaceHint();
+    setSpaceHint(false, 'view');
   };
 
   const onWindowKeyDownAlt = e => {
@@ -150,10 +187,16 @@ export function createMapInteractionController({
 
   const onWindowKeyUpSpace = e => {
     if (e.code !== 'Space') return;
+    if (projectionDragging && projectionDragMode === 'view') {
+      const transform = renderer.getZoomTransform?.();
+      if (transform) recordZoomTransform(transform, { immediate: true });
+    }
     spaceHeld = false;
     projectionDragging = false;
+    projectionDragMode = null;
     renderer.setSpacePanActive(false);
     restoreStatusAfterSpaceHint();
+    setSpacePanCursorState(false, false);
     setAltZoomCursorState(false, false);
     saveState();
   };
@@ -181,6 +224,8 @@ export function createMapInteractionController({
     }
     if (!spaceHeld) return;
     projectionDragging = true;
+    projectionDragMode = e.shiftKey ? 'projection' : 'view';
+    setSpacePanCursorState(true, true);
     lastDragX = e.clientX;
     lastDragY = e.clientY;
     canvasWrapper.setPointerCapture?.(e.pointerId);
@@ -208,13 +253,21 @@ export function createMapInteractionController({
     lastDragX = e.clientX;
     lastDragY = e.clientY;
 
-    const lonOnly = e.shiftKey;
-    const moved = lonOnly
-      ? renderer.panProjectionLongitudeByPixels(dx)
-      : renderer.panProjectionByPixels(dx, dy);
-
-    if (moved) {
-      setSpaceHint(lonOnly);
+    if (projectionDragMode === 'projection') {
+      const moved = renderer.panProjectionByPixels(dx, dy);
+      if (moved) {
+        setSpaceHint(false, 'projection');
+        queueRender();
+      }
+    } else {
+      const t = renderer.getZoomTransform?.() || d3.zoomIdentity;
+      const target = constrainViewModeTransform(
+        d3.zoomIdentity.translate((t.x || 0) + dx, (t.y || 0) + dy).scale(t.k || 1)
+      );
+      mapViewport.withSuppressedHistory(() => {
+        renderer.syncZoomTransform(target);
+      });
+      updateSelectedGeoJSONStatus(target.k);
       queueRender();
     }
 
@@ -224,7 +277,13 @@ export function createMapInteractionController({
 
   const endProjectionDrag = e => {
     if (!projectionDragging) return;
+    if (projectionDragMode === 'view') {
+      const transform = renderer.getZoomTransform?.();
+      if (transform) recordZoomTransform(transform, { immediate: true });
+    }
     projectionDragging = false;
+    projectionDragMode = null;
+    setSpacePanCursorState(spaceHeld, false);
     saveState();
     e?.preventDefault?.();
     e?.stopPropagation?.();
@@ -257,6 +316,7 @@ export function createMapInteractionController({
   const onPointerLeave = e => {
     pointerInCanvasWrapper = false;
     setAltZoomCursorState(false, false);
+    setSpacePanCursorState(false, false);
     if (projectionDragging && !spaceHeld) endProjectionDrag(e);
     if (countryInteractionState.hasHover()) {
       countryInteractionState.setHover(null, '');
@@ -268,6 +328,7 @@ export function createMapInteractionController({
 
   const onPointerEnter = () => {
     pointerInCanvasWrapper = true;
+    setSpacePanCursorState(spaceHeld, projectionDragging);
   };
 
   const onWheel = e => {
@@ -289,7 +350,7 @@ export function createMapInteractionController({
 
   const onPointerMoveCountryHover = async e => {
     if (projectionDragging || cmdZoomDragging || spaceHeld) return;
-    if (!isCountryHoverEnabled()) {
+    if (!isFeatureHoverEnabled()) {
       if (countryInteractionState.hasHover()) {
         countryInteractionState.setHover(null, '');
         syncBasemapCountryInteractionRuntime();
@@ -309,7 +370,7 @@ export function createMapInteractionController({
   };
 
   const onClickCountrySelect = async e => {
-    if (!isCountryHoverEnabled() || projectionDragging || cmdZoomDragging || spaceHeld) return;
+    if (!isFeatureSelectEnabled() || projectionDragging || cmdZoomDragging || spaceHeld) return;
     const hit = await hitTestCountryFromPointerEvent(e);
     if (!hit?.id) return;
     const toggle = e.metaKey || e.ctrlKey;
@@ -327,11 +388,55 @@ export function createMapInteractionController({
     saveState();
   };
 
-  const onDblClickSelectedCountries = e => {
-    if (!isCountryHoverEnabled() || !countryInteractionState.selectedCount()) return;
+  const onDblClickSelectedCountries = async e => {
+    if (projectionDragging || cmdZoomDragging || spaceHeld) return;
+
+    if (e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      zoomInOnPointerEvent(e, 0.5);
+      return;
+    }
+
+    const hoverEnabled = !!isFeatureHoverEnabled?.();
+    const selectEnabled = !!isFeatureSelectEnabled?.();
+    const interactionEnabled = !!isFeatureInteractionEnabled?.();
+    if (!interactionEnabled) {
+      e.preventDefault();
+      e.stopPropagation();
+      zoomInOnPointerEvent(e, 2);
+      return;
+    }
+
+    const selectedIds = Array.from(countryInteractionState.selectedIds?.() || []);
+    const selectedCount = selectedIds.length;
+    const hit = await hitTestCountryFromPointerEvent(e);
+    const hitId = hit?.id || null;
+
+    let zoomIds = [];
+    if (selectEnabled && selectedCount > 0 && hitId && selectedIds.includes(hitId)) {
+      zoomIds = selectedIds;
+    } else if (hitId) {
+      zoomIds = [hitId];
+      if (selectEnabled) {
+        countryInteractionState.setSelectedSingle(hitId);
+      }
+      if (hoverEnabled) {
+        countryInteractionState.setHover(hitId, hit?.name || '');
+      }
+      syncBasemapCountryInteractionRuntime();
+      updateCountryStatusBar();
+      saveState();
+    }
+
+    if (!zoomIds.length) return;
     e.preventDefault();
     e.stopPropagation();
-    zoomToSelectedCountries();
+    if (zoomIds.length === selectedCount && selectedCount > 0) {
+      await zoomToSelectedCountries();
+      return;
+    }
+    await zoomToFeatureIds?.(zoomIds);
   };
 
   windowRef.addEventListener('keydown', onWindowKeyDownSpace);
@@ -363,13 +468,16 @@ export function createMapInteractionController({
     restoreStatusAfterSpaceHint,
     cancelActiveInteractions({ releaseSpace = false } = {}) {
       projectionDragging = false;
+      projectionDragMode = null;
       cmdZoomDragging = false;
       hideZoomBox();
+      setSpacePanCursorState(spaceHeld, false);
       setAltZoomCursorState(false, false);
       if (releaseSpace) {
         spaceHeld = false;
         renderer.setSpacePanActive(false);
         restoreStatusAfterSpaceHint();
+        setSpacePanCursorState(false, false);
       }
     },
     cycleRasterTier({ shiftKey = false, displayedTier = '' } = {}) {

@@ -185,6 +185,7 @@ export function syncBasemapModeUI({ getEl } = {}) {
   const showReticule = getEl?.('set-bm-grat')?.checked !== false;
   if (getEl?.('set-bm-proj-boundary')) getEl('set-bm-proj-boundary').disabled = !showReticule;
   if (getEl?.('set-bm-proj-boundary-sw')) getEl('set-bm-proj-boundary-sw').disabled = !showReticule;
+  if (getEl?.('set-bm-grat-hide-zoom')) getEl('set-bm-grat-hide-zoom').disabled = !showReticule;
 
   const outlineEnabled = enabled && ((getEl?.('set-bm-land-boundaries')?.checked !== false) || (getEl?.('set-bm-country-boundaries')?.checked !== false));
   if (getEl?.('set-bm-globe-outline')) getEl('set-bm-globe-outline').disabled = !outlineEnabled;
@@ -224,9 +225,12 @@ export function populateSettingsForLayer({
       getEl('set-bm-grat-stroke').value = s.graticuleStroke || '#ffffff';
       getEl('set-bm-grat-width').value = s.graticuleWidth ?? 0.5;
       getEl('set-bm-grat-opacity').value = _opacityToPercent(s.graticuleOpacity ?? 0.1);
+      getEl('set-bm-grat-hide-zoom').value = Number.isFinite(+s.graticuleHideInViewZoom) ? +s.graticuleHideInViewZoom : 12;
       getEl('set-bm-proj-boundary').value = s.projectionBoundaryStroke || '#4a8a5a';
       getEl('set-bm-proj-boundary-sw').value = s.projectionBoundaryWidth ?? 1;
-      getEl('set-bm-features-layout-only').checked = s.featuresLayoutOnly === true;
+      getEl('set-bm-features-hide-zoom').value = Number.isFinite(+s.featuresHideInViewZoom)
+        ? +s.featuresHideInViewZoom
+        : (s.featuresLayoutOnly === true ? 1 : 12);
       getEl('set-bm-globe-on').checked = s.showGlobe !== false;
       getEl('set-bm-water').value = s.oceanFill || '#02292e';
       getEl('set-bm-land').value = s.landFill || '#1a3a2a';
@@ -247,6 +251,8 @@ export function populateSettingsForLayer({
       syncBasemapModeUI({ getEl });
       break;
     case layerTypes.GEOJSON:
+      if (getEl('set-gj-hover-on')) getEl('set-gj-hover-on').checked = s.featureHoverEnabled !== false;
+      if (getEl('set-gj-select-on')) getEl('set-gj-select-on').checked = s.featureSelectEnabled !== false;
       getEl('set-gj-fill').value = s.fill;
       getEl('set-gj-fill-op').value = s.fillOpacity;
       getEl('set-gj-stroke').value = s.stroke;
@@ -359,9 +365,11 @@ export function readSettingsFromLayerUI({
       s.graticuleStroke = getEl('set-bm-grat-stroke')?.value;
       s.graticuleWidth = +getEl('set-bm-grat-width')?.value;
       s.graticuleOpacity = _percentToOpacity(getEl('set-bm-grat-opacity')?.value);
+      s.graticuleHideInViewZoom = +getEl('set-bm-grat-hide-zoom')?.value;
       s.projectionBoundaryStroke = getEl('set-bm-proj-boundary')?.value;
       s.projectionBoundaryWidth = +getEl('set-bm-proj-boundary-sw')?.value;
-      s.featuresLayoutOnly = getEl('set-bm-features-layout-only')?.checked === true;
+      s.featuresHideInViewZoom = +getEl('set-bm-features-hide-zoom')?.value;
+      s.featuresLayoutOnly = Number.isFinite(s.featuresHideInViewZoom) && s.featuresHideInViewZoom <= 1;
       s.showGlobe = getEl('set-bm-globe-on')?.checked;
       s.oceanFill = getEl('set-bm-water')?.value;
       s.landFill = getEl('set-bm-land')?.value;
@@ -393,6 +401,8 @@ export function readSettingsFromLayerUI({
       syncBasemapModeUI({ getEl });
       break;
     case layerTypes.GEOJSON:
+      s.featureHoverEnabled = getEl('set-gj-hover-on')?.checked !== false;
+      s.featureSelectEnabled = getEl('set-gj-select-on')?.checked !== false;
       s.fill = getEl('set-gj-fill')?.value;
       s.fillOpacity = +getEl('set-gj-fill-op')?.value;
       s.stroke = getEl('set-gj-stroke')?.value;

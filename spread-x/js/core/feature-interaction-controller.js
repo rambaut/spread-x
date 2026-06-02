@@ -11,6 +11,7 @@ export function createFeatureInteractionController({
   getFeatureCache,
   getFeatureId,
   getFeatureName,
+  isFeatureHitTestEnabled,
   isFeatureHoverEnabled,
   constrainViewModeTransform,
   recordZoomTransform,
@@ -47,7 +48,7 @@ export function createFeatureInteractionController({
   }
 
   async function hitTestFeatureFromPointerEvent(e) {
-    if (!isFeatureHoverEnabled?.()) return null;
+    if (isFeatureHitTestEnabled && !isFeatureHitTestEnabled()) return null;
 
     const projected = eventToProjectedPoint(e);
     if (!projected) return null;
@@ -85,13 +86,11 @@ export function createFeatureInteractionController({
     return best;
   }
 
-  async function zoomToSelectedFeatures() {
-    if (!interactionState?.selectedCount?.()) return;
-
+  async function zoomToFeaturesById(featureIds = []) {
     const cache = await getFeatureCache?.(getActiveFeatureScale?.());
     if (!cache) return;
 
-    const selectedFeatures = Array.from(interactionState.selectedIds?.() || [])
+    const selectedFeatures = Array.from(featureIds || [])
       .map(id => cache.byId?.get?.(id))
       .filter(Boolean);
     if (!selectedFeatures.length) return;
@@ -140,11 +139,17 @@ export function createFeatureInteractionController({
     updateStatusBar();
   }
 
+  async function zoomToSelectedFeatures() {
+    if (!interactionState?.selectedCount?.()) return;
+    await zoomToFeaturesById(Array.from(interactionState.selectedIds?.() || []));
+  }
+
   return {
     statusText,
     updateStatusBar,
     eventToProjectedPoint,
     hitTestFeatureFromPointerEvent,
+    zoomToFeaturesById,
     zoomToSelectedFeatures,
   };
 }
