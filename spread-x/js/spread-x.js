@@ -19,7 +19,7 @@ import { createMapRendererCore } from './core/map-renderer-core.js';
 import { createMapViewport } from './core/map-viewport.js';
 import { createBasemapController } from './core/basemap-controller.js';
 import { createCountryInteractionState } from './core/country-interaction-state.js';
-import { applyNamedGeojsonPerformanceProfile, createDefaultGeojsonLayerBootstrap } from './core/default-geojson-layers.js';
+import { applyNamedGeojsonPerformanceProfile, createDefaultGeojsonLayerBootstrap } from './core/default-vector-layers.js';
 import { createLayerImportService } from './core/layer-import-service.js';
 import { createMapInteractionController } from './core/map-interaction-controller.js';
 import { openTreeMappingDialog } from './core/tree-mapping-dialog.js';
@@ -283,14 +283,19 @@ export async function app(opts = {}) {
   function _syncBasemapCountryInteractionRuntime() {
     const hoveredId = countryInteractionState.hoveredId();
     const selectedIds = Array.from(countryInteractionState.selectedIds());
+    const hoverEnabled = _isFeatureHoverEnabled();
+    const selectEnabled = _isFeatureSelectEnabled();
     const activeGeojson = _activeGeojsonFeatureLayer();
+    const zoomK = Number(renderer.getZoomTransform?.()?.k);
 
     for (const layer of layers) {
       if (layer.type !== LAYER_TYPES.GEOJSON) continue;
       layer.runtime = layer.runtime || {};
       if (activeGeojson && layer.id === activeGeojson.id) {
-        layer.runtime.hoveredFeatureId = hoveredId;
-        layer.runtime.selectedFeatureIds = selectedIds;
+        if (hoverEnabled) layer.runtime.hoveredFeatureId = hoveredId;
+        else delete layer.runtime.hoveredFeatureId;
+        if (selectEnabled) layer.runtime.selectedFeatureIds = selectedIds;
+        else delete layer.runtime.selectedFeatureIds;
       } else {
         delete layer.runtime.hoveredFeatureId;
         delete layer.runtime.selectedFeatureIds;
@@ -300,12 +305,26 @@ export async function app(opts = {}) {
     const base = _activeBasemapLayer();
     if (base) {
       base.runtime = base.runtime || {};
-      const featuresLayoutOnly = base.style?.featuresLayoutOnly === true;
-      base.runtime.showBasemapFeatures = _layoutMode || !featuresLayoutOnly;
+      const style = base.style || {};
+      const featureHideAtZoom = Number(style.featuresHideInViewZoom);
+      const graticuleHideAtZoom = Number(style.graticuleHideInViewZoom);
+      const hideFeaturesInView = !_layoutMode
+        && Number.isFinite(zoomK)
+        && Number.isFinite(featureHideAtZoom)
+        && zoomK >= featureHideAtZoom;
+      const hideGraticuleInView = !_layoutMode
+        && Number.isFinite(zoomK)
+        && Number.isFinite(graticuleHideAtZoom)
+        && zoomK >= graticuleHideAtZoom;
+
+      base.runtime.showBasemapFeatures = _layoutMode || !hideFeaturesInView;
+      base.runtime.showBasemapGraticule = _layoutMode || !hideGraticuleInView;
       base.runtime.showBasemapCountryPolygons = _layoutMode;
       if (_layoutMode) {
-        base.runtime.hoveredFeatureId = hoveredId;
-        base.runtime.selectedFeatureIds = selectedIds;
+        if (hoverEnabled) base.runtime.hoveredFeatureId = hoveredId;
+        else delete base.runtime.hoveredFeatureId;
+        if (selectEnabled) base.runtime.selectedFeatureIds = selectedIds;
+        else delete base.runtime.selectedFeatureIds;
       } else {
         delete base.runtime.hoveredFeatureId;
         delete base.runtime.selectedFeatureIds;
@@ -326,7 +345,7 @@ export async function app(opts = {}) {
     _syncBasemapCountryInteractionRuntime();
   }
 
-  function _isCountryHoverEnabled() {
+  function _isFeatureHoverEnabled() {
     if (_layoutMode) {
       const base = _activeBasemapLayer();
       if (!base || base.visible === false) return false;
@@ -337,7 +356,25 @@ export async function app(opts = {}) {
       return s.showCountryBoundaries !== false;
     }
     const layer = _activeGeojsonFeatureLayer();
-    return !!(layer && layer.visible !== false);
+    return !!(layer && layer.visible !== false && layer.style?.featureHoverEnabled !== false);
+  }
+
+  function _isFeatureSelectEnabled() {
+    if (_layoutMode) {
+      const base = _activeBasemapLayer();
+      if (!base || base.visible === false) return false;
+      const s = base.style || {};
+      if ((s.baseMode || 'globe') === 'geographic') {
+        return s.geographicShowCountries !== false;
+      }
+      return s.showCountryBoundaries !== false;
+    }
+    const layer = _activeGeojsonFeatureLayer();
+    return !!(layer && layer.visible !== false && layer.style?.featureSelectEnabled !== false);
+  }
+
+  function _isFeatureInteractionEnabled() {
+    return _isFeatureHoverEnabled() || _isFeatureSelectEnabled();
   }
 
   // ── Commands ─────────────────────────────────────────────────────────
@@ -2043,7 +2080,8 @@ export async function app(opts = {}) {
     getFeatureName: (feature, index) => (_layoutMode
       ? _countryFeatureName(feature)
       : _geojsonFeatureName(feature, index)),
-    isFeatureHoverEnabled: () => _isCountryHoverEnabled(),
+    isFeatureHitTestEnabled: () => _isFeatureInteractionEnabled(),
+    isFeatureHoverEnabled: () => _isFeatureHoverEnabled(),
     constrainViewModeTransform: transform => _constrainViewModeTransform(transform),
     recordZoomTransform: (transform, opts) => _recordZoomTransform(transform, opts),
     queueRender: () => _queueRender(),
@@ -2061,6 +2099,10 @@ export async function app(opts = {}) {
 
   async function _zoomToSelectedCountries() {
     await geojsonFeatureInteraction.zoomToSelectedFeatures();
+  }
+
+  async function _zoomToFeatureIds(ids = []) {
+    await geojsonFeatureInteraction.zoomToFeaturesById(ids);
   }
 
   function _appendRasterTierStatus(baseText, zoomK, asHtml = false, detailPercent = null) {
@@ -2278,7 +2320,7 @@ export async function app(opts = {}) {
     if (selected?.type === LAYER_TYPES.GEOJSON) {
       _syncAdaptiveDetailSliderForSelectedLayer();
     }
-    if (countryInteractionState.hoveredName() && !mapInteractionController?.isSpaceHeld() && _isCountryHoverEnabled()) {
+    if (countryInteractionState.hoveredName() && !mapInteractionController?.isSpaceHeld() && _isFeatureHoverEnabled()) {
       _updateCountryStatusBar();
       return;
     }
@@ -2324,8 +2366,11 @@ export async function app(opts = {}) {
     zoomBox,
     getBasemapCenter: () => basemapController.basemapCenter(),
     isEditableTarget: _isEditableTarget,
-    isCountryHoverEnabled: _isCountryHoverEnabled,
+    isFeatureHoverEnabled: _isFeatureHoverEnabled,
+    isFeatureSelectEnabled: _isFeatureSelectEnabled,
+    isFeatureInteractionEnabled: _isFeatureInteractionEnabled,
     hitTestCountryFromPointerEvent: _hitTestCountryFromPointerEvent,
+    zoomToFeatureIds: _zoomToFeatureIds,
     zoomToSelectedCountries: _zoomToSelectedCountries,
     syncBasemapCountryInteractionRuntime: _syncBasemapCountryInteractionRuntime,
     updateCountryStatusBar: _updateCountryStatusBar,

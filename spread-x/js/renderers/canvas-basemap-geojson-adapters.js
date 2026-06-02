@@ -141,6 +141,7 @@ export async function drawCanvasBasemapLayer({
 
   const showBasemapFeatures = layer?.runtime?.showBasemapFeatures !== false;
   const showGlobe = showBasemapFeatures && s.showGlobe !== false;
+  const showGraticule = layer?.runtime?.showBasemapGraticule !== false && s.showGraticule !== false;
   const showLandBoundaries = showGlobe && s.showLandBoundaries !== false;
   const showCountryBoundaries = showGlobe && s.showCountryBoundaries !== false;
   const oceanFill = s.oceanFill;
@@ -149,7 +150,7 @@ export async function drawCanvasBasemapLayer({
   const landWidth = (s.landBoundaryWidth ?? s.landStrokeWidth ?? 0.5) / k;
   const outlineStroke = s.projectionBoundaryStroke || s.outlineStroke || '#4a8a5a';
   const outlineWidth = (s.projectionBoundaryWidth ?? s.outlineStrokeWidth ?? 1) / k;
-  const showProjectionBoundary = s.showGraticule !== false;
+  const showProjectionBoundary = showGraticule;
   const ctxPath = d3.geoPath(projection, ctx);
 
   ctx.save();
@@ -168,7 +169,7 @@ export async function drawCanvasBasemapLayer({
   }
   ctx.restore();
 
-  if (s.showGraticule) {
+  if (showGraticule) {
     const step = s.graticuleStep || 10;
     const canTunePrecision = !!projection && typeof projection.precision === 'function';
     const graticulePrecision = Math.max(0.05, Math.min(2, Number(s.graticuleCurvePrecision ?? 0.2)));
@@ -283,7 +284,8 @@ export async function drawCanvasGeographicBasemapLayer({
 
   const sourceType = style.geographicSourceType || 'raster';
   const oceanFill = style.geographicOceanFill || style.oceanFill || '#0d2f40';
-  const showProjectionBoundary = style.showGraticule !== false;
+  const showGraticule = layer?.runtime?.showBasemapGraticule !== false && style.showGraticule !== false;
+  const showProjectionBoundary = showGraticule;
   const ctxPath = d3.geoPath(projection, ctx);
 
   ctx.save();
