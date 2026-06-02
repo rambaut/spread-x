@@ -39,16 +39,31 @@ export async function loadPresetManifest({ fetchImpl, folder, basePath = 'data/m
   }
 }
 
-export async function loadPresetTopologySource({ fetchImpl, manifest, basePath = 'data/maps' } = {}) {
+export async function loadPresetTopologySource({ fetchImpl, manifest, basePath = 'data/maps', levels = [], existingSource = null } = {}) {
   const fetchFn = fetchImpl || fetch;
   const entries = Array.isArray(manifest?.levels) ? manifest.levels : [];
   if (!entries.length) return null;
 
-  const topologiesByLevel = new Map();
-  for (const entry of entries) {
+  const requestedLevels = new Set(Array.isArray(levels) ? levels
+    .map(level => _toNumber(level, NaN))
+    .filter(level => Number.isFinite(level))
+    : []);
+
+  const topologiesByLevel = new Map(existingSource?.topologiesByLevel instanceof Map
+    ? existingSource.topologiesByLevel
+    : Array.isArray(existingSource?.topologiesByLevel)
+      ? existingSource.topologiesByLevel
+      : undefined);
+
+  const entriesToLoad = requestedLevels.size
+    ? entries.filter(entry => requestedLevels.has(_toNumber(entry?.level, NaN)))
+    : [];
+
+  for (const entry of entriesToLoad) {
     const level = _toNumber(entry?.level, NaN);
     const file = String(entry?.file || '').trim();
     if (!Number.isFinite(level) || !file) continue;
+    if (topologiesByLevel.has(level)) continue;
 
     try {
       const response = await fetchFn(`${basePath}/${manifest.folder}/${file}`);

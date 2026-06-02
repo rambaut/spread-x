@@ -881,12 +881,32 @@ export async function app(opts = {}) {
       }
       if (!manifest) continue;
 
+      const requestedLevels = Array.isArray(layer.style?.detailLevels)
+        ? layer.style.detailLevels.map(level => Number(level?.level)).filter(Number.isFinite)
+        : [];
+
       let source = _presetState.topologyByFolder.get(folder);
       if (!source) {
-        source = await loadPresetTopologySource({ fetchImpl: fetch, manifest });
+        source = await loadPresetTopologySource({ fetchImpl: fetch, manifest, levels: requestedLevels });
         if (source) _presetState.topologyByFolder.set(folder, source);
       }
       if (!source) continue;
+
+      if (requestedLevels.length) {
+        const missingLevels = requestedLevels.filter(level => !source.topologiesByLevel?.has?.(level));
+        if (missingLevels.length) {
+          const merged = await loadPresetTopologySource({
+            fetchImpl: fetch,
+            manifest,
+            levels: missingLevels,
+            existingSource: source,
+          });
+          if (merged) {
+            source = merged;
+            _presetState.topologyByFolder.set(folder, source);
+          }
+        }
+      }
 
       const featureKey = String(layer.style?.presetFeatureKey || '').toLowerCase();
       const objectName = manifest.objects?.[featureKey] || manifest.objects?.[layer.style?.presetFeatureLabel] || featureKey;
@@ -1146,19 +1166,6 @@ export async function app(opts = {}) {
           _presetModalShowConfig(manifest, {
             instanceName: _presetInstanceName(manifest),
           });
-          if (!_presetState.modal.source) {
-            void loadPresetTopologySource({ fetchImpl: fetch, manifest }).then(source => {
-              if (!source) return;
-              if (_presetState.modal.manifest?.folder === manifest.folder) {
-                _presetState.modal.source = source;
-              }
-              if (manifest.folder) {
-                _presetState.topologyByFolder.set(manifest.folder, source);
-              }
-            }).catch(err => {
-              console.warn('Could not prefetch preset topology source:', err);
-            });
-          }
         } catch (err) {
           console.error('Failed to open preset configuration:', err);
           $('status-stats').textContent = 'Could not open preset configuration.';
@@ -1337,9 +1344,10 @@ export async function app(opts = {}) {
     if (!_presetState.modal.source && !cachedSource) {
       $('status-stats').textContent = `Loading preset source: ${manifest.name || manifest.folder}`;
     }
+    const requestedLevels = detailRows.map(row => row.level);
     const source = _presetState.modal.source
       || cachedSource
-      || await loadPresetTopologySource({ fetchImpl: fetch, manifest });
+      || await loadPresetTopologySource({ fetchImpl: fetch, manifest, levels: requestedLevels });
     if (_presetOperationIsCanceled(operationToken)) return false;
     if (!source) {
       $('status-stats').textContent = `Could not load preset source: ${manifest.name || manifest.folder}`;
@@ -1348,6 +1356,22 @@ export async function app(opts = {}) {
     _presetState.modal.source = source;
     if (manifest.folder) {
       _presetState.topologyByFolder.set(manifest.folder, source);
+    }
+
+    if (cachedSource && requestedLevels.length) {
+      const missingLevels = requestedLevels.filter(level => !cachedSource.topologiesByLevel?.has?.(level));
+      if (missingLevels.length) {
+        const merged = await loadPresetTopologySource({
+          fetchImpl: fetch,
+          manifest,
+          levels: missingLevels,
+          existingSource: cachedSource,
+        });
+        if (merged) {
+          _presetState.modal.source = merged;
+          if (manifest.folder) _presetState.topologyByFolder.set(manifest.folder, merged);
+        }
+      }
     }
 
     const instanceName = _presetInstanceName(manifest, $('preset-instance-name')?.value || '');
