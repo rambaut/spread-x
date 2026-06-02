@@ -54,16 +54,20 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: 36px;
   padding: 8px 8px 8px 14px;
   border-bottom: 1px solid var(--pt-divider);
   flex-shrink: 0;
 }
 .sx-panel-header h2 {
+  display: inline-flex;
+  align-items: center;
   font-size: 0.72rem;
   font-weight: 700;
   color: var(--pt-red);
   margin: 0;
   letter-spacing: 0.3px;
+  white-space: nowrap;
 }
 .sx-panel-btns { display: flex; align-items: center; gap: 0; }
 .sx-panel-btns button {

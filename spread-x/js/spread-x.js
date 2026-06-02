@@ -8,7 +8,12 @@
 import { downloadBlob, wireDropZone } from '@artic-network/pearcore/utils.js';
 import { createCommands } from '@artic-network/pearcore/commands.js';
 import { createGraphicsExporter } from '@artic-network/pearcore/graphics-export.js';
-import { initAccordionSections, loadSettings, saveSettings as _saveSettings } from '@artic-network/pearcore/pearcore-app.js';
+import {
+  createSidePanelController,
+  initAccordionSections,
+  loadSettings,
+  saveSettings as _saveSettings,
+} from '@artic-network/pearcore/pearcore-app.js';
 import { upgradeAllPaletteColourPickers } from '@artic-network/pearcore/colorpicker.js';
 import { CATEGORICAL_PALETTES } from '@artic-network/pearcore/palettes.js';
 import { createLayer, duplicateLayer, LAYER_TYPES, LAYER_ICONS, MAP_OUTLINES } from './layers.js';
@@ -23,7 +28,6 @@ import { applyNamedGeojsonPerformanceProfile, createDefaultGeojsonLayerBootstrap
 import { createLayerImportService } from './core/layer-import-service.js';
 import { createMapInteractionController } from './core/map-interaction-controller.js';
 import { openTreeMappingDialog } from './core/tree-mapping-dialog.js';
-import { createPanelController } from './core/panel-controller.js';
 import { createAppCommandController } from './core/app-command-controller.js';
 import {
   bindSettingsPanelHandlers,
@@ -707,19 +711,72 @@ export async function app(opts = {}) {
   const layerList   = $('layer-list');
   const settingsPanel = $('settings-panel');
   const settingsPanelBody = $('settings-panel-body');
-  const panelController = createPanelController({
-    documentRef: document,
+  const leftPanelOpenKey = storageKey ? `${storageKey}.panel-left-open` : null;
+  const rightPanelOpenKey = storageKey ? `${storageKey}.panel-right-open` : null;
+
+  function _readPanelOpenPref(key) {
+    if (!key) return null;
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw === '1') return true;
+      if (raw === '0') return false;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  function _writePanelOpenPref(key, isOpen) {
+    if (!key) return;
+    try {
+      localStorage.setItem(key, isOpen ? '1' : '0');
+    } catch {}
+  }
+
+  const leftPanelOpenPref = _readPanelOpenPref(leftPanelOpenKey);
+  const rightPanelOpenPref = _readPanelOpenPref(rightPanelOpenKey);
+  const hasSavedPanelOpenPreference = leftPanelOpenPref !== null || rightPanelOpenPref !== null;
+
+  const layerPanelController = createSidePanelController({
+    panel: layerPanel,
+    toggleButton: $('btn-layers'),
+    closeButton: $('btn-layer-close'),
+    pinButton: $('btn-layer-pin'),
+    bodyEl: document.body,
     windowRef: window,
-    layerPanel,
-    settingsPanel,
-    layerPinButton: $('btn-layer-pin'),
-    settingsPinButton: $('btn-settings-pin'),
+    storageKey: storageKey ? `${storageKey}.panel-left-pinned` : null,
+    initialOpen: leftPanelOpenPref === true,
+    pinnedBodyClass: 'layers-pinned',
+    advancedToggle: true,
   });
-  panelController.bindUI({
-    layerToggleButton: $('btn-layers'),
-    layerCloseButton: $('btn-layer-close'),
-    settingsToggleButton: $('btn-settings'),
-    settingsCloseButton: $('btn-settings-close'),
+  layerPanelController.bindUI({
+    toggleButton: $('btn-layers'),
+    closeButton: $('btn-layer-close'),
+    pinButton: $('btn-layer-pin'),
+  });
+  layerPanelController.onChange((isOpen) => {
+    _writePanelOpenPref(leftPanelOpenKey, isOpen);
+  });
+
+  const settingsPanelController = createSidePanelController({
+    panel: settingsPanel,
+    toggleButton: $('btn-settings'),
+    closeButton: $('btn-settings-close'),
+    pinButton: $('btn-settings-pin'),
+    bodyEl: document.body,
+    windowRef: window,
+    storageKey: storageKey ? `${storageKey}.panel-right-pinned` : null,
+    initialOpen: rightPanelOpenPref === true,
+    pinnedBodyClass: 'settings-pinned',
+    advancedToggle: true,
+  });
+  settingsPanelController.bindUI({
+    toggleButton: $('btn-settings'),
+    closeButton: $('btn-settings-close'),
+    pinButton: $('btn-settings-pin'),
+  });
+  settingsPanelController.onChange((isOpen) => {
+    _writePanelOpenPref(rightPanelOpenKey, isOpen);
   });
 
   const settingsAccordion = initAccordionSections(settingsPanelBody, {
@@ -2467,7 +2524,10 @@ export async function app(opts = {}) {
     cancelTreeMapping: () => $('btn-tree-map-cancel')?.click(),
     getMapInteractionController: () => mapInteractionController,
     closeImportModal: _closeImportModal,
-    closeUnpinnedPanels: () => panelController.closeUnpinnedPanels(),
+    closeUnpinnedPanels: () => {
+      if (!layerPanelController.isPinned()) layerPanelController.close();
+      if (!settingsPanelController.isPinned()) settingsPanelController.close();
+    },
     resetZoomButton: $('btn-reset-zoom'),
     zoomBackButton: $('btn-zoom-back'),
     zoomForwardButton: $('btn-zoom-forward'),
@@ -2534,8 +2594,10 @@ export async function app(opts = {}) {
   _recordZoomTransform(renderer.getZoomTransform(), { immediate: true });
   _updateZoomNavButtons();
 
-  // Open layer panel by default
-  panelController.openLayer();
+  // Open layer panel by default only when no panel open preference is saved.
+  if (!hasSavedPanelOpenPreference) {
+    layerPanelController.open();
+  }
 }
 
 /* ── Helpers ───────────────────────────────────────────────────────── */
