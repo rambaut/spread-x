@@ -502,15 +502,6 @@ function _buildSettingsPanel() {
           Adaptive
         </label>
       </div>
-      <div class="sx-setting-row">
-        <label>
-          <input type="checkbox" id="set-gj-debug-perf" class="form-check-input" />
-          Debug perf status
-        </label>
-      </div>
-      <div class="sx-setting-row" style="justify-content:flex-end">
-        <button id="btn-gj-auto-perf" class="btn btn-sm btn-outline-secondary" type="button" title="Set layer sliders to computed auto values">Auto</button>
-      </div>
     </div>
 
     <!-- ── Points ── -->
@@ -812,10 +803,14 @@ function _buildAppHelpAbout() {
 // ── Status bar ────────────────────────────────────────────────────────────
 
 function _buildAppStatusBar() {
-  return buildStatusBarHTML({
+  const html = buildStatusBarHTML({
     brandHTML: `<span id="status-brand" style="opacity:0.6">
       <i class="bi bi-globe-americas me-1"></i>SPREAD-X</span>`,
   });
+  return html.replace(
+    '</div>',
+    '<button id="btn-debug-perf-status" class="d-none" title="Toggle debug perf status" aria-label="Toggle debug perf status" aria-pressed="false"><i class="bi bi-bug"></i></button></div>'
+  );
 }
 
 // ── Full HTML assembly ────────────────────────────────────────────────────

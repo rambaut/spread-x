@@ -157,12 +157,6 @@ export function syncOceanLayerUI({ getEl, layer } = {}) {
   oceanSection.style.display = isOceansLayer(layer) ? '' : 'none';
 }
 
-export function syncGeojsonAutoButtonUI({ getEl, layer, layerTypes } = {}) {
-  const btn = getEl?.('btn-gj-auto-perf');
-  if (!btn) return;
-  btn.style.display = layer?.type === layerTypes?.GEOJSON ? '' : 'none';
-}
-
 export function syncGeoJSONPerfUI({ getEl, layer, autoGeojsonPerfPolicy } = {}) {
   const adaptiveSimplify = getEl?.('set-gj-adaptive-simplify')?.checked !== false;
   const minZoom = getEl?.('set-gj-min-zoom');
@@ -287,9 +281,7 @@ export function populateSettingsForLayer({
         const threshold = Number(getCanvasToSvgThreshold?.());
         getEl('set-render-svg-switch-zoom').value = Number.isFinite(threshold) ? threshold : RENDERER_MODE_LIMITS.canvasToSvgSwitchDefault;
       }
-      if (getEl('set-gj-debug-perf')) getEl('set-gj-debug-perf').checked = s.debugPerfStatus === true;
       syncOceanLayerUI({ getEl, layer });
-      syncGeojsonAutoButtonUI({ getEl, layer, layerTypes });
       syncGeoJSONPerfUI({ getEl, layer, autoGeojsonPerfPolicy });
       break;
     case layerTypes.FRAME:
@@ -423,7 +415,6 @@ export function readSettingsFromLayerUI({
         s.minSimplify = 0;
         s.maxSimplify = requestedSimplify;
       }
-      if (getEl('set-gj-debug-perf')) s.debugPerfStatus = getEl('set-gj-debug-perf')?.checked;
       if (getEl('set-render-svg-switch-zoom')) {
         setCanvasToSvgThreshold?.(+getEl('set-render-svg-switch-zoom')?.value);
       }

@@ -76,6 +76,19 @@ function _countFeatureVertices(feature) {
   return _countGeometryVertices(feature?.geometry);
 }
 
+function _geometrySupportsFill(geometry) {
+  if (!geometry) return false;
+  if (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') return true;
+  if (geometry.type === 'GeometryCollection') {
+    return Array.isArray(geometry.geometries) && geometry.geometries.some(_geometrySupportsFill);
+  }
+  return false;
+}
+
+function _featuresSupportFill(features) {
+  return (features || []).some(feature => _geometrySupportsFill(feature?.geometry));
+}
+
 export async function drawCanvasBasemapLayer({
   ctx,
   layer,
@@ -453,14 +466,15 @@ export function drawCanvasGeoJsonLayer({
 
     const ctxPath = d3.geoPath(projection, ctx);
     const fc = { type: 'FeatureCollection', features };
+    const hasFillableGeometry = _featuresSupportFill(features);
 
-    if (s.fill && s.fill !== 'none') {
+    if (hasFillableGeometry && s.fill && s.fill !== 'none') {
       ctx.save();
       ctx.beginPath();
       ctxPath(fc);
       ctx.fillStyle = s.fill;
       ctx.globalAlpha *= (s.fillOpacity ?? 1);
-      ctx.fill();
+      fillPathEvenOdd(ctx);
       ctx.restore();
     }
 

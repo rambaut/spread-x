@@ -89,6 +89,19 @@ function _countFeatureVerticesCached(feature) {
   return count;
 }
 
+function _geometrySupportsFill(geometry) {
+  if (!geometry) return false;
+  if (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') return true;
+  if (geometry.type === 'GeometryCollection') {
+    return Array.isArray(geometry.geometries) && geometry.geometries.some(_geometrySupportsFill);
+  }
+  return false;
+}
+
+function _featuresSupportFill(features) {
+  return (features || []).some(feature => _geometrySupportsFill(feature?.geometry));
+}
+
 function _featurePathCached(path, feature, projectionStamp) {
   if (!path || !feature) return null;
   const cached = _featurePathCache.get(feature);
@@ -945,15 +958,18 @@ export function renderSvgGeoJsonLayer({
   if (features.length) {
     const perfDrawStart = perfNow();
     // Fill adjacent polygons as one compound path to avoid anti-alias seams.
-    const hasFill = !!(layerFill && layerFill !== 'none' && (layerFillOpacity ?? 1) > 0);
+    const hasFill = _featuresSupportFill(features)
+      && !!(layerFill && layerFill !== 'none' && (layerFillOpacity ?? 1) > 0);
+    const effectiveLayerFill = hasFill ? layerFill : 'none';
+    const effectiveLayerFillOpacity = hasFill ? layerFillOpacity : 0;
     const useBatchedPath = !isBoundaryLayer && (hasFill || features.length > 250 || renderedVertexCount > 250000);
 
     if (useBatchedPath) {
       g.append('path')
         .datum({ type: 'FeatureCollection', features })
         .attr('d', path)
-        .attr('fill', layerFill)
-        .attr('fill-opacity', layerFillOpacity)
+        .attr('fill', effectiveLayerFill)
+        .attr('fill-opacity', effectiveLayerFillOpacity)
         .attr('stroke', s.stroke)
         .attr('stroke-width', s.strokeWidth)
         .attr('vector-effect', 'non-scaling-stroke')
@@ -962,8 +978,8 @@ export function renderSvgGeoJsonLayer({
     } else {
       g.selectAll('path').data(features).join('path')
         .attr('d', feature => _featurePathCached(path, feature, projectionStamp))
-        .attr('fill', layerFill)
-        .attr('fill-opacity', layerFillOpacity)
+        .attr('fill', effectiveLayerFill)
+        .attr('fill-opacity', effectiveLayerFillOpacity)
         .attr('stroke', s.stroke)
         .attr('stroke-width', s.strokeWidth)
         .attr('vector-effect', 'non-scaling-stroke')

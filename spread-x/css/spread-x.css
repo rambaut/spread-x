@@ -747,6 +747,33 @@ body.layout-mode .sx-layer-add-row {
   color: #fff;
 }
 
+/* Status bar debug-perf bug button (to the right of Help) */
+#btn-debug-perf-status {
+  position: absolute;
+  right: 8px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 0 2px;
+  font-size: 0.85rem;
+  color: var(--pt-text-status-icon);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+#btn-debug-perf-status:hover,
+#btn-debug-perf-status.active {
+  color: var(--pt-gold);
+}
+
+#btn-help { right: 34px; }
+#btn-about { right: 60px; }
+#btn-theme { right: 86px; }
+#btn-share-url { right: 112px; }
+
 /* Layout mode indicator strip at top of layer panel */
 body.layout-mode #layer-panel .sx-panel-header h2 {
   color: var(--pt-teal, #2aa198);

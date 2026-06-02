@@ -70,6 +70,7 @@ export async function app(opts = {}) {
   const root = document;
   const $ = id => root.querySelector('#' + id);
   const statusStats = $('status-stats');
+  const debugPerfToggleBtn = $('btn-debug-perf-status');
 
   // Wait for D3 + topojson to be available (loaded via CDN in HTML)
   const d3 = window.d3;
@@ -1748,6 +1749,7 @@ export async function app(opts = {}) {
     if (!layer) {
       $('settings-none').style.display = '';
       $('settings-common').style.display = 'none';
+      _syncDebugPerfStatusButton();
       return;
     }
 
@@ -1777,6 +1779,24 @@ export async function app(opts = {}) {
     });
     _syncBasemapLayoutLockUI(layer);
     if (layer.type === LAYER_TYPES.BASEMAP) _updateBasemapReadonlyPanel();
+    _syncDebugPerfStatusButton();
+  }
+
+  function _syncDebugPerfStatusButton() {
+    if (!debugPerfToggleBtn) return;
+    const layer = _activeGeojsonFeatureLayer();
+    if (!layer) {
+      debugPerfToggleBtn.classList.add('d-none');
+      debugPerfToggleBtn.classList.remove('active');
+      debugPerfToggleBtn.setAttribute('aria-pressed', 'false');
+      debugPerfToggleBtn.title = 'Toggle debug perf status';
+      return;
+    }
+    const enabled = layer?.style?.debugPerfStatus === true;
+    debugPerfToggleBtn.classList.remove('d-none');
+    debugPerfToggleBtn.classList.toggle('active', enabled);
+    debugPerfToggleBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    debugPerfToggleBtn.title = enabled ? 'Disable debug perf status' : 'Enable debug perf status';
   }
 
   function _normalizeScale(value, fallback = '50m') {
@@ -1850,7 +1870,6 @@ export async function app(opts = {}) {
     settingsPanel,
     getSelectedLayer: () => layers.find(l => l.id === selectedId),
     applyLayer: layer => {
-      const wasDebugPerf = layer?.type === LAYER_TYPES.GEOJSON && layer?.style?.debugPerfStatus === true;
       readSettingsFromLayerUI({
         layer,
         layerTypes: LAYER_TYPES,
@@ -1861,15 +1880,6 @@ export async function app(opts = {}) {
         setCanvasToSvgThreshold: value => _setCanvasToSvgSwitchZoom(value),
         autoGeojsonPerfPolicy: _autoGeojsonPerfPolicyForLayer,
       });
-      const isDebugPerf = layer?.type === LAYER_TYPES.GEOJSON && layer?.style?.debugPerfStatus === true;
-      if (!wasDebugPerf && isDebugPerf) {
-        _lastGeojsonPerfConsoleAt = 0;
-        _emitPerfDebug('enabled', {
-          layer: layer.name || layer.id,
-          zoom: Number(renderer.getZoomTransform?.()?.k) || null,
-          emittedAt: new Date().toISOString(),
-        });
-      }
       _renderLayerList();
       _queueRender();
       _saveState();
@@ -1877,27 +1887,23 @@ export async function app(opts = {}) {
     debounceMs: 150,
   });
 
-  $('btn-gj-auto-perf')?.addEventListener('click', () => {
-    const layer = layers.find(l => l.id === selectedId);
-    if (!layer || layer.type !== LAYER_TYPES.GEOJSON) return;
-    const policy = _autoGeojsonPerfPolicyForLayer(layer);
-    if (!policy) return;
-
-    if ($('set-gj-min-zoom')) $('set-gj-min-zoom').value = String(policy.minZoom);
-
-    readSettingsFromLayerUI({
-      layer,
-      layerTypes: LAYER_TYPES,
-      getEl: $,
-      normalizeScale: _normalizeScale,
-      isLayoutMode: _layoutMode,
-      switchToCanvas: () => renderer.switchToCanvas?.(renderer.getZoomTransform?.()),
-      setCanvasToSvgThreshold: value => _setCanvasToSvgSwitchZoom(value),
-      autoGeojsonPerfPolicy: _autoGeojsonPerfPolicyForLayer,
-    });
-
-    _renderLayerList();
-    _render();
+  debugPerfToggleBtn?.addEventListener('click', () => {
+    const layer = _activeGeojsonFeatureLayer();
+    if (!layer) return;
+    const wasEnabled = layer?.style?.debugPerfStatus === true;
+    layer.style = layer.style || {};
+    layer.style.debugPerfStatus = !wasEnabled;
+    if (!wasEnabled && layer.style.debugPerfStatus) {
+      _lastGeojsonPerfConsoleAt = 0;
+      _emitPerfDebug('enabled', {
+        layer: layer.name || layer.id,
+        zoom: Number(renderer.getZoomTransform?.()?.k) || null,
+        emittedAt: new Date().toISOString(),
+      });
+    }
+    _syncDebugPerfStatusButton();
+    _updateSelectedGeoJSONStatus();
+    _queueRender();
     _saveState();
   });
 
@@ -2236,6 +2242,7 @@ export async function app(opts = {}) {
   function _updateSelectedGeoJSONStatus(zoomK = null) {
     _updateBasemapReadonlyPanel(zoomK);
     const selected = layers.find(l => l.id === selectedId) || null;
+    _syncDebugPerfStatusButton();
     if (selected?.type === LAYER_TYPES.GEOJSON) {
       _syncAdaptiveDetailSliderForSelectedLayer();
     }
