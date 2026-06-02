@@ -16,9 +16,9 @@ const PREFERRED_ADMIN_BOUNDARY_SOURCES = {
 };
 
 const COMBINED_ADMIN_BOUNDARY_PYRAMID = {
-  indexUrl: 'data/maps/GeoBoundaries/combined-pyramid-index.json',
+  manifestUrl: 'data/maps/GeoBoundaries/manifest.json',
   basePath: 'data/maps/GeoBoundaries',
-  objectNames: {
+  fallbackObjectNames: {
     Admin_0: 'admin0',
     Admin_1: 'admin1',
     Admin_2: 'admin2',
@@ -28,6 +28,23 @@ const COMBINED_ADMIN_BOUNDARY_PYRAMID = {
 
 export function normalizedLayerName(layer) {
   return (layer?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function normalizeKey(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function resolveBoundaryObjectName(boundaryKey, objectNames = {}, fallbackObjectNames = {}) {
+  const direct = objectNames?.[boundaryKey];
+  if (typeof direct === 'string' && direct) return direct;
+
+  const normalizedBoundary = normalizeKey(boundaryKey);
+  for (const [key, value] of Object.entries(objectNames || {})) {
+    if (normalizeKey(key) === normalizedBoundary) return String(value || key);
+    if (normalizeKey(value) === normalizedBoundary) return String(value || key);
+  }
+
+  return fallbackObjectNames?.[boundaryKey] || boundaryKey;
 }
 
 export function applyNamedGeojsonPerformanceProfile(layer, layerTypes) {
@@ -136,10 +153,10 @@ export function createDefaultGeojsonLayerBootstrap({
   async function loadCombinedAdminBoundaryPyramid() {
     if (!combinedAdminPyramidPromise) {
       combinedAdminPyramidPromise = (async () => {
-        const indexResponse = await fetchFn(COMBINED_ADMIN_BOUNDARY_PYRAMID.indexUrl);
-        if (!indexResponse.ok) return null;
-        const index = await indexResponse.json();
-        const entries = Array.isArray(index?.levels) ? index.levels : [];
+        const manifestResponse = await fetchFn(COMBINED_ADMIN_BOUNDARY_PYRAMID.manifestUrl);
+        if (!manifestResponse.ok) return null;
+        const manifest = await manifestResponse.json();
+        const entries = Array.isArray(manifest?.levels) ? manifest.levels : [];
         if (!entries.length) return null;
 
         const byLevel = new Map();
@@ -158,7 +175,12 @@ export function createDefaultGeojsonLayerBootstrap({
           }
         }
 
-        return byLevel.size ? byLevel : null;
+        if (!byLevel.size) return null;
+
+        return {
+          byLevel,
+          objectNames: manifest?.objects || {},
+        };
       })().catch(() => null);
     }
     return combinedAdminPyramidPromise;
@@ -169,8 +191,12 @@ export function createDefaultGeojsonLayerBootstrap({
     if (pyramid) {
       return {
         _sxFormat: 'topojson-object-pyramid',
-        topologiesByLevel: pyramid,
-        objectName: COMBINED_ADMIN_BOUNDARY_PYRAMID.objectNames[boundaryKey] || boundaryKey,
+        topologiesByLevel: pyramid.byLevel,
+        objectName: resolveBoundaryObjectName(
+          boundaryKey,
+          pyramid.objectNames,
+          COMBINED_ADMIN_BOUNDARY_PYRAMID.fallbackObjectNames,
+        ),
       };
     }
 
