@@ -162,7 +162,7 @@ export function syncGeoJSONPerfUI({ getEl, layer, autoGeojsonPerfPolicy } = {}) 
   const minZoom = getEl?.('set-gj-min-zoom');
   const detail = getEl?.('set-gj-simplify');
   const adaptiveToggle = getEl?.('set-gj-adaptive-simplify');
-  const adaptiveRow = adaptiveToggle?.closest('.sx-setting-row');
+  const adaptiveRow = adaptiveToggle?.closest('.sx-setting-row, .pt-palette-row');
   const presetLinked = Array.isArray(layer?.style?.detailLevels) && layer.style.detailLevels.length > 0;
 
   if (minZoom) minZoom.disabled = false;
@@ -279,7 +279,7 @@ export function populateSettingsForLayer({
 
         _populateGeojsonDetailControl(detailControl, detailReadout, s, simplifyLevel, { presetLinked });
 
-        const adaptiveRow = getEl('set-gj-adaptive-simplify')?.closest('.sx-setting-row');
+        const adaptiveRow = getEl('set-gj-adaptive-simplify')?.closest('.sx-setting-row, .pt-palette-row');
         if (adaptiveRow) adaptiveRow.style.display = presetLinked ? '' : 'none';
         if (!presetLinked) s.adaptiveSimplify = false;
       }
@@ -493,7 +493,7 @@ export function bindSettingsPanelHandlers({
     const target = e?.target;
     if (target?.id === 'set-gj-simplify') {
       const option = _selectedGeojsonDetailOption(target);
-      _updateGeojsonDetailReadout(target.closest('.sx-setting-row')?.querySelector('#set-gj-simplify-readout'), option);
+      _updateGeojsonDetailReadout(target.closest('.sx-setting-row, .pt-palette-row')?.querySelector('#set-gj-simplify-readout'), option);
     }
     const delay = target?.id === 'set-gj-simplify' ? GEOJSON_LIMITS.adaptiveDetailDebounceMs : debounceMs;
     timer = setTimeout(() => {

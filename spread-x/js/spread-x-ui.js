@@ -33,14 +33,15 @@ function _buildWelcomeOverlay() {
 function _buildLayerPanel() {
   return `
 <div id="layer-panel" class="sx-side-panel sx-panel-left">
-  <div class="sx-panel-header">
-    <h2><i class="bi bi-layers me-1"></i>Layers</h2>
-    <div class="sx-panel-btns">
-      <button id="btn-layer-pin" title="Pin panel open"><i class="bi bi-pin-angle"></i></button>
-      <button id="btn-layer-close" title="Close">&times;</button>
-    </div>
-  </div>
-  <div class="sx-panel-body" style="display:flex;flex-direction:column">
+  ${buildSidePanelHeaderHTML({
+    id: 'palette-panel-header-left',
+    leftHTML: '<h2 class="pt-side-panel-title"><i class="bi bi-layers me-1"></i>Layers</h2>',
+    side: 'left',
+    buttonOrder: 'pin-close',
+    pinButtonId: 'btn-palette-pin-left',
+    closeButtonId: 'btn-palette-close-left',
+  })}
+  <div id="palette-panel-body-left" class="sx-panel-body" style="display:flex;flex-direction:column">
     <div class="sx-layer-add-row">
       <button id="btn-add-layer" class="btn btn-sm btn-outline-secondary" title="Add preset">
         <i class="bi bi-plus-lg me-1"></i>Add preset
@@ -74,14 +75,15 @@ function _buildLayerPanel() {
 function _buildSettingsPanel() {
   return `
 <div id="settings-panel" class="sx-side-panel sx-panel-right">
-  <div class="sx-panel-header">
-    <h2><i class="bi bi-gear me-1"></i>Layer Settings</h2>
-    <div class="sx-panel-btns">
-      <button id="btn-settings-pin" title="Pin panel open"><i class="bi bi-pin-angle"></i></button>
-      <button id="btn-settings-close" title="Close">&times;</button>
-    </div>
-  </div>
-  <div class="sx-panel-body" id="settings-panel-body" style="padding:0">
+  ${buildSidePanelHeaderHTML({
+    id: 'palette-panel-header',
+    leftHTML: '<h2 class="pt-side-panel-title"><i class="bi bi-gear me-1"></i>Layer Settings</h2>',
+    side: 'right',
+    buttonOrder: 'close-pin',
+    pinButtonId: 'btn-palette-pin',
+    closeButtonId: 'btn-palette-close',
+  })}
+  <div class="sx-panel-body" id="palette-panel-body">
 
     <div id="settings-none" class="sx-settings-placeholder">
       <p class="text-muted">Select a layer to edit its settings</p>
