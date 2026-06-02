@@ -133,6 +133,16 @@ function _countBoundaryLineParts(geometry) {
   return 0;
 }
 
+function _isComplementLandGeometry(d3, geometry) {
+  if (!d3 || !geometry) return false;
+  try {
+    const area = d3.geoArea(geometry);
+    return Number.isFinite(area) && area > (Math.PI * 2);
+  } catch {
+    return false;
+  }
+}
+
 function _decimateLineCoords(coords, stride) {
   if (!Array.isArray(coords) || coords.length <= 2 || stride <= 1) return coords;
   const out = [];
@@ -435,30 +445,59 @@ export async function renderSvgBasemapLayer({
     let cache = basemapCache;
     if (cache?.stamp !== projectionStamp || cache?.projId !== projId || cache?.src !== bsrc) {
       let land = null;
+      let landBoundary = null;
       let countryMesh = null;
+      let countriesObject = null;
+      let countriesFeatures = null;
+      let landBoundaryMesh = null;
       if (landTopo) {
         const landKey = pickTopoObjectKey(landTopo, ['land']);
         if (landKey) {
           land = prepareForSeamClipping(topojson.feature(landTopo, landTopo.objects[landKey]));
+          landBoundary = land;
         }
       }
       if (countriesTopo) {
         const countriesKey = pickTopoObjectKey(countriesTopo, ['countries', 'country', 'admin0', 'ne_admin_0_countries']);
         if (countriesKey) {
+          countriesObject = countriesTopo.objects[countriesKey];
+          countriesFeatures = prepareForSeamClipping(
+            topojson.feature(countriesTopo, countriesTopo.objects[countriesKey])
+          );
           countryMesh = prepareForSeamClipping(
             topojson.mesh(countriesTopo, countriesTopo.objects[countriesKey], (a, b) => a !== b)
           );
+          landBoundaryMesh = prepareForSeamClipping(
+            topojson.mesh(countriesTopo, countriesTopo.objects[countriesKey], (a, b) => a === b)
+          );
         }
       }
+
+      if (countriesTopo && countriesObject && topojson?.merge) {
+        const mergedLand = prepareForSeamClipping(topojson.merge(countriesTopo, [countriesObject]));
+        const usingSharedLayoutTopology = landId === countriesId;
+        if (usingSharedLayoutTopology) {
+          // Shared layout-topo can expose complement orientation on dissolved geometry.
+          // Use explicit country polygons for fill and exterior mesh for coastline.
+          land = countriesFeatures || mergedLand;
+          landBoundary = landBoundaryMesh || mergedLand;
+        } else if (!land || _isComplementLandGeometry(d3, land)) {
+          land = mergedLand;
+          landBoundary = landBoundaryMesh || mergedLand;
+        }
+      }
+
       cache = {
         stamp: projectionStamp,
         projId,
         src: bsrc,
         land,
+        landBoundary: landBoundary || land,
         countryMesh,
         pathStamp: null,
         spherePathD: null,
         landPathD: null,
+        landBoundaryPathD: null,
         countryMeshPathD: null,
       };
       setBasemapCache(cache);
@@ -468,13 +507,15 @@ export async function renderSvgBasemapLayer({
       cache.pathStamp = projectionStamp;
       cache.spherePathD = path({ type: 'Sphere' }) || null;
       cache.landPathD = cache.land ? (path(cache.land) || null) : null;
+      cache.landBoundaryPathD = cache.landBoundary ? (path(cache.landBoundary) || null) : null;
       cache.countryMeshPathD = cache.countryMesh ? (path(cache.countryMesh) || null) : null;
       setBasemapCache(cache);
     }
 
-    const { land, countryMesh } = cache || {};
+    const { land, landBoundary, countryMesh } = cache || {};
     const spherePathD = cache?.spherePathD || null;
     const landPathD = cache?.landPathD || null;
+    const landBoundaryPathD = cache?.landBoundaryPathD || null;
     const countryMeshPathD = cache?.countryMeshPathD || null;
 
     if (spherePathD) {
@@ -482,32 +523,29 @@ export async function renderSvgBasemapLayer({
       if (!spherePathEl.empty()) spherePathEl.attr('d', spherePathD);
     }
 
-    if (land) {
-      if (showGlobe) {
-        g.append('path')
-          .attr('class', 'land')
-          .attr('d', landPathD || path(land))
-          .attr('fill-rule', 'evenodd')
-          .attr('fill', landFill)
-          .attr('stroke', 'none');
-      }
-
-      if (showLandBoundaries) {
-        g.append('path')
-          .attr('class', 'land-boundaries')
-          .attr('d', landPathD || path(land))
-          .attr('fill', 'none')
-          .attr('stroke', landBoundaryStroke)
-          .attr('stroke-width', landBoundaryWidth)
-          .attr('vector-effect', 'non-scaling-stroke')
-          .attr('stroke-linejoin', 'round')
-          .attr('stroke-linecap', 'round');
-      }
+    if (land && showGlobe) {
+      g.append('path')
+        .attr('class', 'land')
+        .attr('d', landPathD || path(land))
+        .attr('fill', landFill)
+        .attr('stroke', 'none');
     }
 
     if (showCountryBoundaries && countryMesh) {
       g.append('path').attr('class', 'borders')
         .attr('d', countryMeshPathD || path(countryMesh))
+        .attr('fill', 'none')
+        .attr('stroke', landBoundaryStroke)
+        .attr('stroke-width', landBoundaryWidth)
+        .attr('vector-effect', 'non-scaling-stroke')
+        .attr('stroke-linejoin', 'round')
+        .attr('stroke-linecap', 'round');
+    }
+
+    if (landBoundary && showLandBoundaries) {
+      g.append('path')
+        .attr('class', 'land-boundaries')
+        .attr('d', landBoundaryPathD || path(landBoundary))
         .attr('fill', 'none')
         .attr('stroke', landBoundaryStroke)
         .attr('stroke-width', landBoundaryWidth)

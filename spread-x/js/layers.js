@@ -28,6 +28,11 @@ export const FRAME_ASPECTS = {
 /* ── Built-in map outline sources (TopoJSON from world-atlas) ──────── */
 
 export const MAP_OUTLINES = [
+  // Local globe basemap shared-arc TopoJSON
+  { id: 'sx-layout-topo',   name: 'SPREAD-X Layout Topology', url: 'data/maps/layout-topo.json' },
+  // Legacy standalone fallback files
+  { id: 'sx-land',          name: 'SPREAD-X Land',            url: 'data/maps/land.topo.json' },
+  { id: 'sx-countries',     name: 'SPREAD-X Countries',       url: 'data/maps/countries.topo.json' },
   // CDN world-atlas (D3 basemap source)
   { id: 'countries-110m', name: 'Countries (110m)',  url: 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json' },
   { id: 'countries-50m',  name: 'Countries (50m)',   url: 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json' },
@@ -94,6 +99,7 @@ const DEFAULT_STYLES = {
     graticuleHideInViewZoom: 12,
     featuresHideInViewZoom: 12,
     showGlobe:         true,
+    basemapDetailLevel: 10,
     oceanFill:         '#02292e',
     landFill:          '#1a3a2a',
     showLandBoundaries:true,

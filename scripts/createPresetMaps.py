@@ -116,6 +116,22 @@ def parse_features(value: str) -> list[str]:
     return selected
 
 
+def parse_layout_level(value: str) -> int:
+    try:
+        level = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"Invalid layout simplify level '{value}'. Expected integer 0..10."
+        ) from exc
+
+    if level < 0 or level > 10:
+        raise argparse.ArgumentTypeError(
+            f"Invalid layout simplify level '{value}'. Expected integer 0..10."
+        )
+
+    return level
+
+
 def run_command(args: list[str]) -> None:
     result = subprocess.run(args, capture_output=True, text=True)
     if result.returncode != 0:
@@ -214,6 +230,86 @@ def build_land_topology(src_admin0: Path, tmp_dir: Path, out_dir: Path) -> None:
             "-o",
             "format=topojson",
             str(land_topology),
+        ]
+    )
+
+
+def build_layout_topology(
+    src_admin0: Path,
+    tmp_dir: Path,
+    layout_out_dir: Path,
+    layout_level: int,
+) -> None:
+    land_geojson = create_land_geojson(src_admin0, tmp_dir)
+    layout_base = tmp_dir / "layout.level0.topo.json"
+    layout_file = layout_out_dir / "layout-topo.json"
+
+    print("Building shared layout topology (countries, land)")
+    run_command(
+        [
+            "mapshaper",
+            "combine-files",
+            str(src_admin0),
+            "name=countries",
+            str(land_geojson),
+            "name=land",
+            "-clean",
+            "rewind",
+            "-snap",
+            "interval=1e-7",
+            "-rename-layers",
+            "countries,land",
+            "-o",
+            "format=topojson",
+            str(layout_base),
+        ]
+    )
+
+    if layout_level == 0:
+        shutil.copy2(layout_base, layout_file)
+        run_command(
+            [
+                "mapshaper",
+                str(layout_file),
+                "-clean",
+                "rewind",
+                "-o",
+                "format=topojson",
+                "force",
+                str(layout_file),
+            ]
+        )
+        print(f"Wrote {layout_file} at level 0")
+        return
+
+    keep_pct = KEEP_PCTS[layout_level]
+    print(f"Simplifying layout topology to level {layout_level} (keep {keep_pct}%)")
+    run_command(
+        [
+            "mapshaper",
+            str(layout_base),
+            "-simplify",
+            "visvalingam",
+            "weighted",
+            f"{keep_pct}%",
+            "keep-shapes",
+            "-o",
+            "format=topojson",
+            str(layout_file),
+        ]
+    )
+
+    # Rewind polygon rings after simplify to avoid complement-style land fill.
+    run_command(
+        [
+            "mapshaper",
+            str(layout_file),
+            "-clean",
+            "rewind",
+            "-o",
+            "format=topojson",
+            "force",
+            str(layout_file),
         ]
     )
 
@@ -377,6 +473,20 @@ def parse_args() -> argparse.Namespace:
         default=",".join(ALL_FEATURES),
         help="Comma-separated source features to include (admin0,admin1,admin2). Default: all.",
     )
+    parser.add_argument(
+        "--create-layout-topo",
+        action="store_true",
+        help=(
+            "Also create spread-x/data/maps/layout-topo.json as a shared-arc combined "
+            "countries+land topology for globe layout rendering."
+        ),
+    )
+    parser.add_argument(
+        "--layout-level",
+        type=parse_layout_level,
+        default=10,
+        help="Simplification level (0..10) for --create-layout-topo. Default: 10",
+    )
     return parser.parse_args()
 
 
@@ -386,6 +496,7 @@ def main() -> int:
     try:
         levels = parse_levels(args.levels)
         features = parse_features(args.features)
+        layout_level = int(args.layout_level)
 
         input_folder = Path(args.input_folder).expanduser().resolve()
         output_folder = (
@@ -393,6 +504,8 @@ def main() -> int:
             if args.output_folder
             else input_folder
         )
+        repo_root = Path(__file__).resolve().parent.parent
+        layout_out_dir = repo_root / "spread-x" / "data" / "maps"
 
         src_dir = input_folder / "src"
         if not src_dir.exists() or not src_dir.is_dir():
@@ -417,6 +530,15 @@ def main() -> int:
         level_entries = build_pyramid_levels(base_file, output_folder, levels)
         write_manifest_file(output_folder, layer_names, level_entries)
         copy_license_file(input_folder, output_folder)
+
+        if args.create_layout_topo:
+            src_admin0 = src_dir / "admin0.geojson"
+            if not src_admin0.exists():
+                raise RuntimeError(
+                    "--create-layout-topo requires src/admin0.geojson to build countries and land objects."
+                )
+            layout_out_dir.mkdir(parents=True, exist_ok=True)
+            build_layout_topology(src_admin0, tmp_dir, layout_out_dir, layout_level)
 
         shutil.rmtree(tmp_dir, ignore_errors=True)
         print("Done.")

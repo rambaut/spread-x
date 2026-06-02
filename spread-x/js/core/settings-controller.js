@@ -228,6 +228,7 @@ export function populateSettingsForLayer({
       getEl('set-bm-grat-hide-zoom').value = Number.isFinite(+s.graticuleHideInViewZoom) ? +s.graticuleHideInViewZoom : 12;
       getEl('set-bm-proj-boundary').value = s.projectionBoundaryStroke || '#4a8a5a';
       getEl('set-bm-proj-boundary-sw').value = s.projectionBoundaryWidth ?? 1;
+      getEl('set-bm-features-detail').value = s.basemapDetailLevel ?? 10;
       getEl('set-bm-features-hide-zoom').value = Number.isFinite(+s.featuresHideInViewZoom)
         ? +s.featuresHideInViewZoom
         : (s.featuresLayoutOnly === true ? 1 : 12);
@@ -368,6 +369,7 @@ export function readSettingsFromLayerUI({
       s.graticuleHideInViewZoom = +getEl('set-bm-grat-hide-zoom')?.value;
       s.projectionBoundaryStroke = getEl('set-bm-proj-boundary')?.value;
       s.projectionBoundaryWidth = +getEl('set-bm-proj-boundary-sw')?.value;
+      s.basemapDetailLevel = Math.max(0, Math.min(10, Math.round(+getEl('set-bm-features-detail')?.value || 0)));
       s.featuresHideInViewZoom = +getEl('set-bm-features-hide-zoom')?.value;
       s.featuresLayoutOnly = Number.isFinite(s.featuresHideInViewZoom) && s.featuresHideInViewZoom <= 1;
       s.showGlobe = getEl('set-bm-globe-on')?.checked;

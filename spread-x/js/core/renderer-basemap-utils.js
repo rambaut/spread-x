@@ -19,10 +19,12 @@ export function makeProjection(d3, projId, width, height, center, rotate, frameR
 
 export function basemapOutlineIds(source) {
   switch (source) {
-    case 'ne110': return ['ne-land-110m', 'ne-countries-110m'];
-    case 'ne50': return ['ne-land-50m', 'ne-countries-50m'];
-    case 'ne10': return ['ne-land-10m', 'ne-countries-10m'];
-    default: return ['land-110m', 'countries-110m'];
+    case 'ne110':
+    case 'ne50':
+    case 'ne10':
+    case 'd3':
+    default:
+      return ['sx-layout-topo', 'sx-layout-topo'];
   }
 }
 

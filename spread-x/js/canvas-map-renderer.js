@@ -95,6 +95,9 @@ export function createCanvasMapRenderer({ canvasElement, d3, topojson, onZoomCha
       const modifierHeld = !!event.altKey;
       return (!modifierHeld || event.type === 'wheel') && !event.button;
     })
+    .wheelDelta(event =>
+      event.deltaY * (event.deltaMode === 1 ? 0.05 : event.deltaMode ? 1 : 0.002) * (event.ctrlKey ? 10 : 1)
+    )
       .scaleExtent([RENDER_ZOOM_LIMITS.min, RENDER_ZOOM_LIMITS.max])
     .on('zoom', ({ transform }) => {
       _currentTransform = transform;

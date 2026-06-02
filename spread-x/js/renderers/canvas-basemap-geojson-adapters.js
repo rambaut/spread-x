@@ -1,7 +1,17 @@
 import { countryFeatureId } from '../core/renderer-basemap-utils.js';
-import { analyzeTopojsonArcUsage } from '../core/topojson-utils.js';
+import { analyzeTopojsonArcUsage, simplifyTopology } from '../core/topojson-utils.js';
 
 const BOUNDARY_LAYER_NAMES = new Set(['countries', 'admin0', 'admin1', 'admin2']);
+
+function _isComplementLandGeometry(d3, geometry) {
+  if (!d3 || !geometry) return false;
+  try {
+    const area = d3.geoArea(geometry);
+    return Number.isFinite(area) && area > (Math.PI * 2);
+  } catch {
+    return false;
+  }
+}
 
 function countBoundaryLinePartsFromFeatures(features) {
   let count = 0;
@@ -194,50 +204,80 @@ export async function drawCanvasBasemapLayer({
   }
 
   const bsrc = s.basemapSource || 'd3';
+  const detailLevel = Math.max(0, Math.min(10, Math.round(+(s.basemapDetailLevel ?? 10))));
   const [landId, countriesId] = basemapOutlineIds(bsrc);
   try {
-    const [landTopo, countriesTopo] = await Promise.all([
+    const [landTopoRaw, countriesTopoRaw] = await Promise.all([
       fetchOutline(landId),
       fetchOutline(countriesId),
     ]);
 
     let cache = basemapCache;
-    if (cache?.stamp !== projectionStamp || cache?.projId !== projId || cache?.src !== bsrc) {
+    if (cache?.stamp !== projectionStamp || cache?.projId !== projId || cache?.src !== bsrc || cache?.detailLevel !== detailLevel) {
+      const landTopo = simplifyTopology(landTopoRaw, detailLevel);
+      const countriesTopo = simplifyTopology(countriesTopoRaw, detailLevel);
       let land = null;
+      let landBoundary = null;
       let countryMesh = null;
+      let countriesObject = null;
+      let countriesFeatures = null;
+      let landBoundaryMesh = null;
       if (landTopo) {
         const landKey = pickTopoObjectKey(landTopo, ['land']);
         if (landKey) {
           land = prepareForSeamClipping(topojson.feature(landTopo, landTopo.objects[landKey]));
+          landBoundary = land;
         }
       }
       if (countriesTopo) {
         const countriesKey = pickTopoObjectKey(countriesTopo, ['countries', 'country', 'admin0', 'ne_admin_0_countries']);
         if (countriesKey) {
+          countriesObject = countriesTopo.objects[countriesKey];
+          countriesFeatures = prepareForSeamClipping(
+            topojson.feature(countriesTopo, countriesTopo.objects[countriesKey])
+          );
           countryMesh = prepareForSeamClipping(
             topojson.mesh(countriesTopo, countriesTopo.objects[countriesKey], (a, b) => a !== b)
           );
+          landBoundaryMesh = prepareForSeamClipping(
+            topojson.mesh(countriesTopo, countriesTopo.objects[countriesKey], (a, b) => a === b)
+          );
         }
       }
-      cache = { stamp: projectionStamp, projId, src: bsrc, land, countryMesh };
+
+      if (countriesTopo && countriesObject && topojson?.merge) {
+        const mergedLand = prepareForSeamClipping(topojson.merge(countriesTopo, [countriesObject]));
+        const usingSharedLayoutTopology = landId === countriesId;
+        if (usingSharedLayoutTopology) {
+          // Shared layout-topo can expose complement orientation on dissolved geometry.
+          // Use explicit country polygons for fill and exterior mesh for coastline.
+          land = countriesFeatures || mergedLand;
+          landBoundary = landBoundaryMesh || mergedLand;
+        } else if (!land || _isComplementLandGeometry(d3, land)) {
+          land = mergedLand;
+          landBoundary = landBoundaryMesh || mergedLand;
+        }
+      }
+
+      cache = { stamp: projectionStamp, projId, src: bsrc, detailLevel, land, landBoundary: landBoundary || land, countryMesh };
       setBasemapCache(cache);
     }
 
-    const { land, countryMesh } = cache || {};
+    const { land, landBoundary, countryMesh } = cache || {};
 
     if (land && showGlobe) {
       ctx.save();
       ctx.beginPath();
       ctxPath(land);
       ctx.fillStyle = landFill;
-      fillPathEvenOdd(ctx);
+      ctx.fill();
       ctx.restore();
     }
 
-    if (land && showLandBoundaries) {
+    if (showCountryBoundaries && countryMesh) {
       ctx.save();
       ctx.beginPath();
-      ctxPath(land);
+      ctxPath(countryMesh);
       ctx.strokeStyle = landStroke;
       ctx.lineWidth = landWidth;
       ctx.lineJoin = 'round';
@@ -246,10 +286,10 @@ export async function drawCanvasBasemapLayer({
       ctx.restore();
     }
 
-    if (showCountryBoundaries && countryMesh) {
+    if (landBoundary && showLandBoundaries) {
       ctx.save();
       ctx.beginPath();
-      ctxPath(countryMesh);
+      ctxPath(landBoundary);
       ctx.strokeStyle = landStroke;
       ctx.lineWidth = landWidth;
       ctx.lineJoin = 'round';
