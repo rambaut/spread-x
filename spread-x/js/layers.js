@@ -99,7 +99,7 @@ const DEFAULT_STYLES = {
     graticuleHideInViewZoom: 12,
     featuresHideInViewZoom: 12,
     showGlobe:         true,
-    basemapDetailLevel: 10,
+    basemapDetailLevel: 0,
     oceanFill:         '#02292e',
     landFill:          '#1a3a2a',
     showLandBoundaries:true,

@@ -434,16 +434,19 @@ export async function renderSvgBasemapLayer({
   }
 
   const bsrc = s.basemapSource || 'd3';
+  const detailLevel = Math.max(0, Math.min(10, Math.round(+(s.basemapDetailLevel ?? 10))));
   const [landId, countriesId] = basemapOutlineIds(bsrc);
 
   try {
-    const [landTopo, countriesTopo] = await Promise.all([
+    const [landTopoRaw, countriesTopoRaw] = await Promise.all([
       fetchOutline(landId),
       fetchOutline(countriesId),
     ]);
 
     let cache = basemapCache;
-    if (cache?.stamp !== projectionStamp || cache?.projId !== projId || cache?.src !== bsrc) {
+    if (cache?.stamp !== projectionStamp || cache?.projId !== projId || cache?.src !== bsrc || cache?.detailLevel !== detailLevel) {
+      const landTopo = simplifyTopology(landTopoRaw, detailLevel);
+      const countriesTopo = simplifyTopology(countriesTopoRaw, detailLevel);
       let land = null;
       let landBoundary = null;
       let countryMesh = null;
@@ -491,6 +494,7 @@ export async function renderSvgBasemapLayer({
         stamp: projectionStamp,
         projId,
         src: bsrc,
+        detailLevel,
         land,
         landBoundary: landBoundary || land,
         countryMesh,

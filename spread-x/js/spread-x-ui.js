@@ -313,7 +313,7 @@ function _buildSettingsPanel() {
       <h3><i class="bi bi-globe-americas"></i> Features</h3>
       <div class="sx-setting-row">
         <label for="set-bm-features-detail">Detail</label>
-        <input type="range" id="set-bm-features-detail" class="form-range" min="0" max="10" step="1" value="10" />
+        <input type="range" id="set-bm-features-detail" class="form-range" min="0" max="10" step="1" value="0" />
       </div>
       <div class="sx-setting-row">
         <label for="set-bm-features-hide-zoom">Hide features in view mode at zoom</label>
