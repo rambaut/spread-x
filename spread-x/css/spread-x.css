@@ -418,6 +418,29 @@ body.layout-mode .sx-layer-add-row {
   gap: 5px;
 }
 
+.sx-settings-section h3 .sx-accordion-toggle {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: inherit;
+  opacity: 0.7;
+  padding: 0 2px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sx-settings-section h3 .sx-accordion-toggle:hover {
+  opacity: 1;
+}
+
+.sx-accordion-body {
+  display: none;
+}
+
+.sx-settings-section.is-open > .sx-accordion-body {
+  display: block;
+}
+
 .sx-setting-row {
   display: flex;
   align-items: center;

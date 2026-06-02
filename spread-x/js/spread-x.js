@@ -8,7 +8,7 @@
 import { downloadBlob, wireDropZone } from '@artic-network/pearcore/utils.js';
 import { createCommands } from '@artic-network/pearcore/commands.js';
 import { createGraphicsExporter } from '@artic-network/pearcore/graphics-export.js';
-import { loadSettings, saveSettings as _saveSettings } from '@artic-network/pearcore/pearcore-app.js';
+import { initAccordionSections, loadSettings, saveSettings as _saveSettings } from '@artic-network/pearcore/pearcore-app.js';
 import { upgradeAllPaletteColourPickers } from '@artic-network/pearcore/colorpicker.js';
 import { CATEGORICAL_PALETTES } from '@artic-network/pearcore/palettes.js';
 import { createLayer, duplicateLayer, LAYER_TYPES, LAYER_ICONS, MAP_OUTLINES } from './layers.js';
@@ -683,6 +683,13 @@ export async function app(opts = {}) {
     layerCloseButton: $('btn-layer-close'),
     settingsToggleButton: $('btn-settings'),
     settingsCloseButton: $('btn-settings-close'),
+  });
+
+  const settingsAccordion = initAccordionSections(settingsPanelBody, {
+    sectionSelector: '.sx-settings-section',
+    headerSelector: ':scope > h3',
+    storageKey: `${storageKey}.settings-accordion`,
+    defaultOpenSectionId: 'settings-basemap',
   });
 
   _upgradeSettingsColourPickers();
@@ -1803,6 +1810,7 @@ export async function app(opts = {}) {
     });
     _syncBasemapLayoutLockUI(layer);
     if (layer.type === LAYER_TYPES.BASEMAP) _updateBasemapReadonlyPanel();
+    settingsAccordion.refresh({ defaultOpenSectionId: `settings-${layer.type}` });
     _syncDebugPerfStatusButton();
   }
 
@@ -2472,6 +2480,7 @@ export async function app(opts = {}) {
   // ── Initial render ───────────────────────────────────────────────────
   _renderLayerList();
   _showSettingsForLayer(selectedId);
+  settingsAccordion.refresh({ defaultOpenSectionId: 'settings-basemap' });
   await _render();
   if (!_layoutMode) {
     const t = renderer.getZoomTransform?.();
