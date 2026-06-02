@@ -494,6 +494,38 @@ body.layout-mode .sx-layer-add-row {
   opacity: 0.95;
 }
 
+/* Right panel: follow the shared pearcore palette row contract instead of the
+   app-local flex layout used in a few other spread-x dialogs. */
+.sx-panel-right #palette-panel-body .sx-setting-row {
+  display: grid;
+  grid-template-columns: max-content 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 6px;
+  justify-content: initial;
+  margin-bottom: 0;
+}
+.sx-panel-right #palette-panel-body .sx-setting-row label {
+  justify-self: end;
+  text-align: right;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.sx-panel-right #palette-panel-body .sx-setting-row .form-range {
+  width: 100%;
+  min-width: 0;
+}
+.sx-panel-right #palette-panel-body .sx-setting-row .form-select,
+.sx-panel-right #palette-panel-body .sx-setting-row .form-control {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+.sx-panel-right #palette-panel-body .sx-setting-row.has-range {
+  grid-template-columns: max-content 1fr 46px;
+}
+
+
 .sx-layer-vis.disabled {
   opacity: 0.25;
   cursor: not-allowed;

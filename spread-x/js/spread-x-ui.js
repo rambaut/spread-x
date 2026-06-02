@@ -85,12 +85,12 @@ function _buildSettingsPanel() {
   })}
   <div class="sx-panel-body" id="palette-panel-body">
 
-    <div id="settings-none" class="sx-settings-placeholder">
+    <div id="settings-none" class="sx-settings-placeholder" data-palette-role="empty">
       <p class="text-muted">Select a layer to edit its settings</p>
     </div>
 
     <!-- ── Common (shown for every layer) ── -->
-    <div id="settings-common" class="sx-settings-section" style="display:none">
+    <div id="settings-common" class="sx-settings-section" data-sec-id="settings-common" data-palette-role="shared" data-layer-type="shared" style="display:none">
       <div class="sx-setting-row">
         <label for="setting-layer-name">Name</label>
         <input type="text" id="setting-layer-name" class="form-control form-control-sm sx-setting-input" />
@@ -102,7 +102,7 @@ function _buildSettingsPanel() {
     </div>
 
     <!-- ── Base map ── -->
-    <div id="settings-basemap" class="sx-settings-section" style="display:none">
+    <div id="settings-basemap" class="sx-settings-section" data-sec-id="settings-basemap" data-palette-role="layer-type" data-layer-type="basemap" style="display:none">
       <h3><i class="bi bi-globe-americas"></i> Base Map</h3>
       <div id="settings-basemap-layout-note" class="sx-setting-row" style="display:none">
         <small class="text-muted">Base map styling is editable only in Layout mode. Use the Config button in the Base Map layer row to modify projection, basemap mode, and Natural Earth source settings.</small>
@@ -360,81 +360,82 @@ function _buildSettingsPanel() {
       <div id="settings-bm-geographic-group" style="display:none">
         <hr />
         <h3><i class="bi bi-map"></i> Natural Earth Geographic</h3>
-        <div class="sx-setting-row">
-          <label>Datum</label>
+        <div class="pt-palette-row" title="Geographic coordinate reference system">
+          <span class="pt-palette-label">Datum</span>
           <input type="text" class="form-control form-control-sm sx-setting-input" value="WGS84" readonly />
         </div>
-        <div class="sx-setting-row">
-          <label for="set-bm-geographic-source">Source</label>
+        <div class="pt-palette-row" title="Choose raster or vector Natural Earth data for geographic mode">
+          <span class="pt-palette-label">Source</span>
           <select id="set-bm-geographic-source" class="form-select form-select-sm sx-setting-input">
             <option value="raster">Natural Earth Raster</option>
             <option value="vector">Natural Earth Vector</option>
           </select>
         </div>
 
-        <div id="settings-bm-geographic-raster-group">
-          <div class="sx-setting-row">
-            <label for="set-bm-geographic-raster-set">Raster set</label>
+        <div id="settings-bm-geographic-raster-group" class="pt-palette-grid">
+          <div class="pt-palette-row" title="Raster map set used while zooming geographic mode">
+            <span class="pt-palette-label">Raster set</span>
             <select id="set-bm-geographic-raster-set" class="form-select form-select-sm sx-setting-input">
               <option value="NE1">NE1</option>
             </select>
           </div>
-          <div class="sx-setting-row">
+          <div class="pt-palette-row--span">
             <small class="text-muted">Automatically switches from 50M to HR raster as you zoom in.</small>
           </div>
         </div>
 
-        <div id="settings-bm-geographic-vector-group" style="display:none">
-          <div class="sx-setting-row">
-            <label for="set-bm-geographic-vector-scale">Vector land scale</label>
+        <div id="settings-bm-geographic-vector-group" class="pt-palette-grid" style="display:none">
+          <div class="pt-palette-row" title="Vector layer detail used in geographic mode">
+            <span class="pt-palette-label">Vector land scale</span>
             <select id="set-bm-geographic-vector-scale" class="form-select form-select-sm sx-setting-input">
               <option value="110m">110m</option>
               <option value="50m">50m</option>
               <option value="10m">10m</option>
             </select>
           </div>
-          <div class="sx-setting-row">
-            <label for="set-bm-geographic-ocean">Ocean colour</label>
+          <div class="pt-palette-row" title="Ocean fill colour used in vector geographic mode">
+            <span class="pt-palette-label">Ocean colour</span>
             <input type="color" id="set-bm-geographic-ocean" class="pt-palette-color" value="#0d2f40" />
           </div>
-          <div class="sx-setting-row">
-            <label for="set-bm-geographic-land">Land colour</label>
+          <div class="pt-palette-row" title="Land fill colour used in vector geographic mode">
+            <span class="pt-palette-label">Land colour</span>
             <input type="color" id="set-bm-geographic-land" class="pt-palette-color" value="#9aa876" />
           </div>
         </div>
 
         <hr />
-        <div class="sx-setting-row">
-          <label>
+        <div class="pt-palette-row" title="Show country polygons">
+          <span class="pt-palette-label">Show country polygons</span>
+          <label class="d-flex align-items-center gap-2 m-0" style="grid-column: 2 / -1;">
             <input type="checkbox" id="set-bm-geographic-countries-on" class="form-check-input" checked />
             Show country polygons
           </label>
         </div>
-        <div class="sx-setting-row">
-          <label for="set-bm-geographic-country-scale">Country scale</label>
+        <div class="pt-palette-row" title="Country boundary detail scale">
+          <span class="pt-palette-label">Country scale</span>
           <select id="set-bm-geographic-country-scale" class="form-select form-select-sm sx-setting-input">
             <option value="110m">110m</option>
             <option value="50m">50m</option>
             <option value="10m">10m</option>
           </select>
         </div>
-        <div class="sx-setting-row">
-          <label for="set-bm-geographic-country-stroke">Country colour</label>
+        <div class="pt-palette-row" title="Country boundary stroke colour">
+          <span class="pt-palette-label">Country colour</span>
           <input type="color" id="set-bm-geographic-country-stroke" class="pt-palette-color" value="#3e3e3e" />
         </div>
-        <div class="sx-setting-row">
-          <label for="set-bm-geographic-country-width">Country stroke width</label>
+        <div class="pt-palette-row" title="Country boundary stroke width">
+          <span class="pt-palette-label">Country stroke width</span>
           <input type="range" id="set-bm-geographic-country-width" class="form-range" min="0" max="5" step="0.05" value="0.45" />
         </div>
-        <div class="sx-setting-row">
-          <label for="set-bm-geographic-country-opacity">Country opacity</label>
+        <div class="pt-palette-row" title="Country boundary opacity">
+          <span class="pt-palette-label">Country opacity</span>
           <input type="range" id="set-bm-geographic-country-opacity" class="form-range" min="0" max="1" step="0.05" value="0.65" />
         </div>
       </div>
     </div>
 
     <!-- ── Map frame ── -->
-    <div id="settings-frame" class="sx-settings-section" style="display:none">
+    <div id="settings-frame" class="sx-settings-section" data-sec-id="settings-frame" data-palette-role="layer-type" data-layer-type="frame" style="display:none">
       <h3><i class="bi bi-bounding-box-circles"></i> Map Frame</h3>
       <div class="sx-setting-row">
         <label for="set-fr-aspect">Aspect ratio</label>
@@ -475,7 +476,7 @@ function _buildSettingsPanel() {
     </div>
 
     <!-- ── Style ── -->
-    <div id="settings-geojson" class="sx-settings-section" style="display:none">
+    <div id="settings-geojson" class="sx-settings-section" data-sec-id="settings-geojson" data-palette-role="layer-type" data-layer-type="geojson" style="display:none">
       <h3><i class="bi bi-hexagon"></i> Style</h3>
       <div class="sx-setting-row">
         <label>
@@ -525,7 +526,7 @@ function _buildSettingsPanel() {
     </div>
 
     <!-- ── Points ── -->
-    <div id="settings-points" class="sx-settings-section" style="display:none">
+    <div id="settings-points" class="sx-settings-section" data-sec-id="settings-points" data-palette-role="layer-type" data-layer-type="points" style="display:none">
       <h3><i class="bi bi-geo-alt"></i> Points</h3>
       <div class="sx-setting-row">
         <label for="set-pt-radius">Radius</label>
@@ -560,7 +561,7 @@ function _buildSettingsPanel() {
     </div>
 
     <!-- ── Tree ── -->
-    <div id="settings-tree" class="sx-settings-section" style="display:none">
+    <div id="settings-tree" class="sx-settings-section" data-sec-id="settings-tree" data-palette-role="layer-type" data-layer-type="tree" style="display:none">
       <h3><i class="bi bi-diagram-3"></i> Tree</h3>
       <div class="sx-setting-row">
         <label for="set-tr-style">Branches</label>

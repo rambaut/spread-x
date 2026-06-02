@@ -1784,7 +1784,14 @@ export async function app(opts = {}) {
 
   // ── Settings panel wiring ────────────────────────────────────────────
 
-  const SETTINGS_SECTIONS = ['settings-basemap', 'settings-frame', 'settings-geojson', 'settings-points', 'settings-tree'];
+  const SETTINGS_PALETTES = [
+    { layerType: LAYER_TYPES.BASEMAP, sectionId: 'settings-basemap' },
+    { layerType: LAYER_TYPES.FRAME, sectionId: 'settings-frame' },
+    { layerType: LAYER_TYPES.GEOJSON, sectionId: 'settings-geojson' },
+    { layerType: LAYER_TYPES.POINTS, sectionId: 'settings-points' },
+    { layerType: LAYER_TYPES.TREE, sectionId: 'settings-tree' },
+  ];
+  const SETTINGS_PALETTE_IDS = SETTINGS_PALETTES.map(palette => palette.sectionId);
   const basemapStatusController = createBasemapStatusController({
     getEl: $,
     getLayers: () => layers,
@@ -1910,7 +1917,7 @@ export async function app(opts = {}) {
   function _showSettingsForLayer(id) {
     const layer = layers.find(l => l.id === id);
     // Hide all type sections
-    for (const sec of SETTINGS_SECTIONS) {
+    for (const sec of SETTINGS_PALETTE_IDS) {
       const el = $(sec);
       if (el) el.style.display = 'none';
     }
@@ -1931,7 +1938,7 @@ export async function app(opts = {}) {
     $('settings-common').style.display = basemapReadOnly ? 'none' : '';
 
     // Show type-specific section and populate
-    const secId = 'settings-' + layer.type;
+    const secId = SETTINGS_PALETTES.find(palette => palette.layerType === layer.type)?.sectionId || ('settings-' + layer.type);
     const sec = $(secId);
     if (sec) sec.style.display = '';
 
