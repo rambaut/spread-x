@@ -2046,6 +2046,11 @@ export async function app(opts = {}) {
   });
 
   // ── Layout mode ──────────────────────────────────────────────────────
+  const panelController = {
+    openSettings: () => settingsPanelController.open(),
+    openLayer: () => layerPanelController.open(),
+  };
+
   const welcomeOverlay = $('welcome-overlay');
   const layoutModeController = createLayoutModeController({
     documentRef: document,

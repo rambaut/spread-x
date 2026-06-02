@@ -228,7 +228,7 @@ export function populateSettingsForLayer({
       getEl('set-bm-grat-hide-zoom').value = Number.isFinite(+s.graticuleHideInViewZoom) ? +s.graticuleHideInViewZoom : 12;
       getEl('set-bm-proj-boundary').value = s.projectionBoundaryStroke || '#4a8a5a';
       getEl('set-bm-proj-boundary-sw').value = s.projectionBoundaryWidth ?? 1;
-      getEl('set-bm-features-detail').value = s.basemapDetailLevel ?? 10;
+      getEl('set-bm-features-detail').value = s.basemapDetailLevel ?? 0;
       getEl('set-bm-features-hide-zoom').value = Number.isFinite(+s.featuresHideInViewZoom)
         ? +s.featuresHideInViewZoom
         : (s.featuresLayoutOnly === true ? 1 : 12);
