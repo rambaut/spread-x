@@ -896,11 +896,18 @@ export async function app(opts = {}) {
     const ranges = settingsPanelBody.querySelectorAll('input.form-range[type="range"]');
     for (const slider of ranges) {
       const row = slider.closest('.sx-setting-row, .pt-palette-row');
-      if (!row || row.querySelector('.sx-range-value')) continue;
-      row.classList.add('has-range');
-      const out = document.createElement('span');
-      out.className = 'sx-range-value';
-      row.appendChild(out);
+      if (!row) continue;
+
+      // Prefer pearcore-provided range readouts when present.
+      let out = row.querySelector('.pt-val, .sx-range-value');
+      if (!out) {
+        out = document.createElement('span');
+        out.className = 'sx-range-value';
+        row.appendChild(out);
+      }
+      if (out.classList.contains('sx-range-value')) {
+        row.classList.add('has-range');
+      }
 
       const update = () => {
         const stepStr = slider.getAttribute('step') || '';
@@ -946,9 +953,12 @@ export async function app(opts = {}) {
       const visLocked = layer.type === LAYER_TYPES.FRAME
         || isPresetGroup
         || (_layoutMode && layer.type === LAYER_TYPES.BASEMAP);
-      const layoutLocked = _layoutMode && layer.type !== LAYER_TYPES.BASEMAP && !isPresetGroup;
+      const layoutLocked = _layoutMode
+        && layer.type !== LAYER_TYPES.BASEMAP
+        && layer.type !== LAYER_TYPES.FRAME
+        && !isPresetGroup;
       const isPresetFeature = !isPresetGroup && _isPresetFeatureLayer(layer);
-      const showConfigButton = layer.type === LAYER_TYPES.BASEMAP || isPresetGroup || isPresetFeature;
+      const showConfigButton = isPresetGroup || isPresetFeature;
       const rowColor = isPresetGroup ? presetGroup.color : (layer.style?.presetColor || '');
       const el = document.createElement('div');
       el.className = 'sx-layer-item'
@@ -1679,8 +1689,10 @@ export async function app(opts = {}) {
     if (item) {
       if (item.dataset.presetInstanceId && _layoutMode) return;
       const layer = layers.find(l => l.id === item.dataset.layerId);
-      // In layout mode only the basemap layer is selectable
-      if (_layoutMode && layer?.type !== LAYER_TYPES.BASEMAP) return;
+      // In layout mode, only basemap and frame layers are selectable.
+      if (_layoutMode
+        && layer?.type !== LAYER_TYPES.BASEMAP
+        && layer?.type !== LAYER_TYPES.FRAME) return;
       selectedId = item.dataset.layerId;
       _renderLayerList();
       _showSettingsForLayer(selectedId);
@@ -1910,35 +1922,110 @@ export async function app(opts = {}) {
     if (readout) readout.textContent = String(options[nearestIndex]?.label || '');
   }
 
-  function _syncBasemapLayoutLockUI(layer) {
-    const sec = $('settings-basemap');
-    const globeSec = $('settings-basemap-globe');
-    const geographicSec = $('settings-basemap-geographic');
-    if (!sec) return;
-    const note = $('settings-basemap-layout-note');
-    const readOnlyPanel = $('settings-basemap-readonly');
+  function _countGeometryVertices(geometry) {
+    if (!geometry || !geometry.type) return 0;
+    const countCoords = coords => {
+      if (!Array.isArray(coords)) return 0;
+      if (coords.length && typeof coords[0] === 'number') return 1;
+      return coords.reduce((sum, c) => sum + countCoords(c), 0);
+    };
+    return countCoords(geometry.coordinates);
+  }
+
+  function _layerSecondaryInfo(layer) {
+    if (!layer) return '';
+    if (layer.type === LAYER_TYPES.GEOJSON) {
+      const geo = resolveLayerGeoJSON(layer, {
+        topojson,
+        resolvedCache: _settingsResolvedGeojsonCache,
+      });
+      const features = countGeoJSONFeatures(geo);
+      const vertices = _extractGeojsonFeatures(geo)
+        .reduce((sum, feature) => sum + _countGeometryVertices(feature?.geometry), 0);
+      return `${features} features${vertices > 0 ? ` • ${vertices} vertices` : ''}`;
+    }
+    if (layer.type === LAYER_TYPES.POINTS) {
+      const points = Array.isArray(layer.data) ? layer.data.length : 0;
+      return `${points} points`;
+    }
+    if (layer.type === LAYER_TYPES.TREE) {
+      const nodes = Array.isArray(layer.data?.nodes) ? layer.data.nodes.length : 0;
+      return nodes > 0 ? `${nodes} nodes` : 'Tree layer';
+    }
+    if (layer.type === LAYER_TYPES.FRAME) {
+      return _layoutMode ? 'Map frame settings' : 'View-mode frame summary';
+    }
+    return '';
+  }
+
+  function _updateFrameReadonlyPanel(layer) {
+    const framePanel = $('settings-frame-readonly');
+    if (!framePanel) return;
+    const style = layer?.style || {};
+    const aspect = $('fr-ro-aspect');
+    const padding = $('fr-ro-padding');
+    const fill = $('fr-ro-fill');
+    const stroke = $('fr-ro-stroke');
+
+    if (aspect) aspect.textContent = String(style.aspectPreset || 'slideWide');
+    if (padding) padding.textContent = `${Number(style.padding ?? FRAME_PADDING_UI.defaultValue)} px`;
+    if (fill) fill.textContent = style.showFill === false ? 'Off' : `${String(style.fill || '#ffffff')} @ ${Number(style.fillOpacity ?? 1).toFixed(2)}`;
+    if (stroke) stroke.textContent = `${String(style.stroke || '#d8d8d8')} @ ${Number(style.strokeWidth ?? 1.5).toFixed(2)}`;
+  }
+
+  function _syncLayerTitlePanel(layer) {
+    const titleEl = $('setting-layer-title');
+    const renameBtn = $('btn-setting-layer-rename');
+    const configureBtn = $('btn-setting-layer-configure');
+    const nameInput = $('setting-layer-name');
+    const opacityInput = $('setting-layer-opacity');
+    const secondaryEl = $('setting-layer-secondary');
+    const richRow = $('setting-layer-rich-row');
+    const basemapPanel = $('settings-basemap-readonly');
+    const framePanel = $('settings-frame-readonly');
+
+    if (!layer) return;
+
+    if (titleEl) titleEl.textContent = layer.name;
+    if (nameInput) nameInput.value = layer.name;
+    if (opacityInput) opacityInput.value = layer.opacity;
+    if (secondaryEl) secondaryEl.textContent = _layerSecondaryInfo(layer);
+
+    const canRename = layer.type !== LAYER_TYPES.BASEMAP && layer.type !== LAYER_TYPES.FRAME;
+    if (renameBtn) renameBtn.style.display = canRename ? 'inline-flex' : 'none';
+    const showConfigure = (layer.type === LAYER_TYPES.BASEMAP || layer.type === LAYER_TYPES.FRAME) && !_layoutMode;
+    if (configureBtn) configureBtn.style.display = showConfigure ? 'inline-flex' : 'none';
+
+    const showBasemapRich = layer.type === LAYER_TYPES.BASEMAP && !_layoutMode;
+    const showFrameRich = layer.type === LAYER_TYPES.FRAME && !_layoutMode;
+    if (richRow) richRow.style.display = (showBasemapRich || showFrameRich) ? '' : 'none';
+    if (basemapPanel) basemapPanel.style.display = showBasemapRich ? '' : 'none';
+    if (framePanel) framePanel.style.display = showFrameRich ? '' : 'none';
+
+    if (showBasemapRich) _updateBasemapReadonlyPanel();
+    if (showFrameRich) _updateFrameReadonlyPanel(layer);
+  }
+
+  function _syncBasemapModeSectionVisibility(layer) {
+    const baseSection = $('settings-basemap');
+    const globeSection = $('settings-basemap-globe');
+    const geographicSection = $('settings-basemap-geographic');
     const isBasemap = layer?.type === LAYER_TYPES.BASEMAP;
-    const readOnly = isBasemap && !_layoutMode;
+    const editable = isBasemap && _layoutMode;
 
-    if (note) note.style.display = readOnly ? '' : 'none';
-    if (readOnlyPanel) readOnlyPanel.style.display = readOnly ? '' : 'none';
-    if (readOnly) {
-      if (globeSec) globeSec.style.display = 'none';
-      if (geographicSec) geographicSec.style.display = 'none';
+    if (baseSection) baseSection.style.display = editable ? '' : 'none';
+    if (globeSection) globeSection.style.display = 'none';
+    if (geographicSection) geographicSection.style.display = 'none';
+
+    if (!editable) return;
+
+    syncBasemapModeUIControl({ getEl: $ });
+    const mode = $('set-bm-mode')?.value || layer?.style?.baseMode || 'globe';
+    if (mode === 'geographic') {
+      if (geographicSection) geographicSection.style.display = '';
+    } else {
+      if (globeSection) globeSection.style.display = '';
     }
-
-    const sectionInner = sec.querySelector(':scope > .pt-section-body > .pt-section-body-inner') || sec;
-    for (const child of sectionInner.children) {
-      if (child.id === 'settings-basemap-layout-note') continue;
-      if (child.id === 'settings-basemap-readonly') continue;
-      if (child.tagName === 'H3') continue;
-      if (readOnly) child.style.display = 'none';
-      else child.style.display = '';
-    }
-
-    if (!readOnly) syncBasemapModeUIControl({ getEl: $ });
-
-    if (readOnly) _updateBasemapReadonlyPanel();
   }
 
   function _showSettingsForLayer(id) {
@@ -1958,32 +2045,17 @@ export async function app(opts = {}) {
 
     $('settings-none').style.display = 'none';
     $('settings-common').style.display = '';
-    $('setting-layer-name').value = layer.name;
-    $('setting-layer-opacity').value = layer.opacity;
-
-    const nameRow = $('setting-layer-name')?.closest('.sx-setting-row, .pt-palette-row');
-    if (nameRow) {
-      const canRename = layer.type !== LAYER_TYPES.BASEMAP && layer.type !== LAYER_TYPES.FRAME;
-      nameRow.style.display = canRename ? '' : 'none';
-    }
-
-    const opacityRow = $('setting-layer-opacity')?.closest('.sx-setting-row, .pt-palette-row');
-    if (opacityRow) {
-      const showOpacity = layer.type !== LAYER_TYPES.BASEMAP;
-      opacityRow.style.display = showOpacity ? '' : 'none';
-    }
-
-    const basemapReadOnly = layer.type === LAYER_TYPES.BASEMAP && !_layoutMode;
-    $('settings-common').style.display = basemapReadOnly ? 'none' : '';
+    _syncLayerTitlePanel(layer);
 
     // Show type-specific section and populate
-    const secId = SETTINGS_PALETTES.find(palette => palette.layerType === layer.type)?.sectionId || ('settings-' + layer.type);
-    const sec = $(secId);
-    if (sec) sec.style.display = '';
-    if (layer.type === LAYER_TYPES.BASEMAP) {
-      for (const modeSecId of BASEMAP_MODE_SECTION_IDS) {
-        const modeSec = $(modeSecId);
-        if (modeSec) modeSec.style.display = '';
+    let sec = null;
+    if (layer.type !== LAYER_TYPES.BASEMAP) {
+      const secId = SETTINGS_PALETTES.find(palette => palette.layerType === layer.type)?.sectionId || ('settings-' + layer.type);
+      sec = $(secId);
+      if (layer.type === LAYER_TYPES.FRAME && !_layoutMode) {
+        if (sec) sec.style.display = 'none';
+      } else if (sec) {
+        sec.style.display = '';
       }
     }
 
@@ -1998,10 +2070,9 @@ export async function app(opts = {}) {
       getCurrentGeojsonSimplifyLevel: _currentGeojsonSimplifyLevel,
       autoGeojsonPerfPolicy: _autoGeojsonPerfPolicyForLayer,
     });
+    _syncBasemapModeSectionVisibility(layer);
     settingsOptionsController.evaluate();
-    _syncBasemapLayoutLockUI(layer);
-    if (layer.type === LAYER_TYPES.BASEMAP) _updateBasemapReadonlyPanel();
-    _ensureSettingsSectionOpen(sec);
+    _ensureSettingsSectionOpen(sec || $('settings-common'));
     _syncDebugPerfStatusButton();
   }
 
@@ -2103,11 +2174,45 @@ export async function app(opts = {}) {
         setCanvasToSvgThreshold: value => _setCanvasToSvgSwitchZoom(value),
         autoGeojsonPerfPolicy: _autoGeojsonPerfPolicyForLayer,
       });
+      _syncLayerTitlePanel(layer);
+      _syncBasemapModeSectionVisibility(layer);
       _renderLayerList();
       _queueRender();
       _saveState();
     },
     debounceMs: 150,
+  });
+
+  $('btn-setting-layer-rename')?.addEventListener('click', () => {
+    const layer = layers.find(l => l.id === selectedId);
+    if (!layer) return;
+    if (layer.type === LAYER_TYPES.BASEMAP || layer.type === LAYER_TYPES.FRAME) return;
+    const current = String(layer.name || '');
+    const next = window.prompt('Rename layer', current);
+    if (next == null) return;
+    const trimmed = String(next).trim();
+    if (!trimmed || trimmed === current) return;
+    layer.name = trimmed;
+    const nameInput = $('setting-layer-name');
+    if (nameInput) nameInput.value = trimmed;
+    _syncLayerTitlePanel(layer);
+    _renderLayerList();
+    _saveState();
+  });
+
+  $('btn-setting-layer-configure')?.addEventListener('click', () => {
+    const layer = layers.find(l => l.id === selectedId);
+    if (!layer) return;
+    if (!(layer.type === LAYER_TYPES.BASEMAP || layer.type === LAYER_TYPES.FRAME)) return;
+    if (_layoutMode) return;
+    _enterLayoutMode();
+    if (layer.type === LAYER_TYPES.FRAME) {
+      selectedId = layer.id;
+      _renderLayerList();
+      _showSettingsForLayer(selectedId);
+      _render();
+      _saveState();
+    }
   });
 
   debugPerfToggleBtn?.addEventListener('click', () => {

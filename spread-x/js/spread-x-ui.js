@@ -91,7 +91,7 @@ function _sxCheckboxRow(opts = {}) {
     rowStyle,
     title,
     label: text,
-    controlHTML: `<label class="d-flex align-items-center gap-2 m-0" style="grid-column: 2 / -1;"><input type="checkbox" id="${id}" class="form-check-input"${checkedAttr} /> ${text}</label>`,
+    controlHTML: `<input type="checkbox" id="${id}" class="form-check-input" aria-label="${text}"${checkedAttr} />`,
   };
 }
 
@@ -135,13 +135,13 @@ function _buildSettingsPanel() {
             <option value="geoAzimuthalEqualArea">Azimuthal Equal Area</option>
             <option value="geoStereographic">Stereographic</option>
           </optgroup>
-          <optgroup label="Conic">
-            <option value="geoAlbers">Albers</option>
-            <option value="geoConicConformal">Conic Conformal</option>
+          <optgroup label="Interrupted">
+            <option value="geoInterruptedMollweide">Interrupted Mollweide</option>
+            <option value="geoInterruptedMollweideHemispheres">Interrupted Mollweide Hemispheres</option>
           </optgroup>
-          <optgroup label="Compromise">
-            <option value="geoWinkel3">Winkel Tripel</option>
-            <option value="geoHammer">Hammer</option>
+          <optgroup label="Polyhedral">
+            <option value="geoPolyhedralButterfly">Polyhedral Butterfly</option>
+            <option value="geoPolyhedralWaterman">Polyhedral Waterman</option>
           </optgroup>
           <optgroup label="Quincuncial">
             <option value="geoPeirceQuincuncial">Peirce Quincuncial</option>
@@ -276,9 +276,21 @@ function _buildSettingsPanel() {
       secId: 'settings-common',
       role: 'shared',
       layerType: 'shared',
+      title: '',
       rows: [
-        { label: 'Name', controlHTML: '<input type="text" id="setting-layer-name" class="form-control form-control-sm sx-setting-input" />' },
-        { label: 'Opacity', controlHTML: '<input type="range" id="setting-layer-opacity" class="form-range" min="0" max="1" step="0.05" value="1" />' },
+        {
+          rowId: 'setting-layer-title-row',
+          rowClass: 'pt-palette-row--span',
+          hideLabel: true,
+          controlHTML: '<div class="sx-layer-title-panel"><div class="sx-layer-title-main"><span id="setting-layer-title" class="sx-layer-title-text"></span><button id="btn-setting-layer-rename" type="button" class="btn btn-sm btn-outline-secondary" title="Rename layer" style="display:none"><i class="bi bi-pencil"></i></button></div><div id="setting-layer-secondary" class="sx-layer-secondary"></div><input type="text" id="setting-layer-name" class="form-control form-control-sm sx-setting-input" style="display:none" /><input type="range" id="setting-layer-opacity" class="form-range" min="0" max="1" step="0.05" value="1" style="display:none" /></div>',
+        },
+        {
+          rowId: 'setting-layer-rich-row',
+          rowClass: 'pt-palette-row--span',
+          rowStyle: 'display:none',
+          hideLabel: true,
+          controlHTML: '<div id="setting-layer-rich" class="sx-layer-rich-box"><div id="settings-basemap-readonly" style="display:none"><div class="pt-palette-row"><span class="pt-palette-label">Mode choices</span><span id="bm-ro-mode-choices" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Source choices</span><span id="bm-ro-source-choices" class="sx-setting-value"></span></div><hr /><div class="pt-palette-row"><span class="pt-palette-label">Current mode</span><span id="bm-ro-mode" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Current source</span><span id="bm-ro-source" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Zoom factor</span><span id="bm-ro-zoom" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Viewport center</span><span id="bm-ro-center" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Detail level</span><span id="bm-ro-detail" class="sx-setting-value"></span></div></div><div id="settings-frame-readonly" style="display:none"><div class="pt-palette-row"><span class="pt-palette-label">Aspect</span><span id="fr-ro-aspect" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Padding</span><span id="fr-ro-padding" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Fill</span><span id="fr-ro-fill" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Stroke</span><span id="fr-ro-stroke" class="sx-setting-value"></span></div></div><div class="sx-layer-rich-actions"><button id="btn-setting-layer-configure" type="button" class="btn btn-sm btn-outline-primary" title="Configure layer in Layout mode" style="display:none"><i class="bi bi-sliders me-1"></i>Configure</button></div></div>',
+        },
       ],
     }),
 
@@ -287,19 +299,17 @@ function _buildSettingsPanel() {
       secId: 'settings-basemap',
       layerType: 'basemap',
       title: 'BASE MAP',
-      icon: 'bi bi-globe-americas',
+      icon: 'bi bi-globe-europe-africa',
       rows: [
-        { rowId: 'settings-basemap-layout-note', rowClass: 'pt-palette-row--span', rowStyle: 'display:none', controlHTML: '<small class="text-muted">Base map styling is editable only in Layout mode. Use the Config button in the Base Map layer row to modify projection, basemap mode, and Natural Earth source settings.</small>' },
-        { rowClass: 'pt-palette-row--span', rowStyle: 'display:none', controlHTML: '<div id="settings-basemap-readonly" style="display:none"><div class="pt-palette-row"><span class="pt-palette-label">Mode choices</span><span id="bm-ro-mode-choices" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Source choices</span><span id="bm-ro-source-choices" class="sx-setting-value"></span></div><hr /><div class="pt-palette-row"><span class="pt-palette-label">Current mode</span><span id="bm-ro-mode" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Current source</span><span id="bm-ro-source" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Zoom factor</span><span id="bm-ro-zoom" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Viewport center</span><span id="bm-ro-center" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Detail level</span><span id="bm-ro-detail" class="sx-setting-value"></span></div></div>' },
         { kind: 'color', id: 'set-bm-bg', value: '#ffffff', label: 'Backgound' },
         {
           kind: 'select',
           id: 'set-bm-mode',
-          label: 'Base map mode',
+          label: 'Source',
           className: 'form-select form-select-sm sx-setting-input pt-palette-select',
           options: [
             { value: 'globe', label: 'Globe' },
-            { value: 'geographic', label: 'Natural Earth Geographic (WGS84)' },
+            { value: 'geographic', label: 'Natural Earth (WGS84)' },
           ],
         },
       ],
@@ -319,16 +329,16 @@ function _buildSettingsPanel() {
           items: [
             { kind: 'select', id: 'set-bm-projection', className: 'form-select form-select-sm sx-setting-input pt-palette-select', label: 'Projection', optionsHTML: projectionOptionsHTML },
             _sxCheckboxRow({ id: 'set-bm-grat', text: 'Reticule (graticule)' }),
-            { kind: 'range', id: 'set-bm-grat-step', min: 5, max: 30, step: 5, value: 10, label: 'Reticule step (°)' },
+            { kind: 'range', id: 'set-bm-grat-step', min: 5, max: 30, step: 5, value: 10, label: 'Reticule step (°)', title: 'Spacing between reticule lines in degrees of latitude and longitude' },
             { kind: 'color', id: 'set-bm-grat-stroke', value: '#ffffff', label: 'Reticule colour' },
-            { kind: 'range', id: 'set-bm-grat-width', min: 0, max: 3, step: 0.05, value: 0.5, label: 'Reticule width' },
-            { kind: 'range', id: 'set-bm-grat-opacity', min: 0, max: 100, step: 1, value: 10, label: 'Reticule opacity' },
-            { kind: 'range', id: 'set-bm-grat-hide-zoom', min: 1, max: 12, step: 0.25, value: 12, label: 'Hide reticule in view mode at zoom' },
-            { kind: 'color', id: 'set-bm-proj-boundary', value: '#4a8a5a', label: 'Boundary' },
-            { kind: 'range', id: 'set-bm-proj-boundary-sw', min: 0, max: 5, step: 0.05, value: 1, label: 'Boundary width' },
+            { kind: 'range', id: 'set-bm-grat-width', min: 0, max: 3, step: 0.05, value: 0.5, label: 'Reticule width', title: 'Reticule line width' },
+            { kind: 'range', id: 'set-bm-grat-opacity', min: 0, max: 100, step: 1, value: 10, label: 'Reticule opacity', title: 'Reticule line opacity as percentage' },
+            { kind: 'range', id: 'set-bm-grat-hide-zoom', min: 1, max: 12, step: 0.25, value: 12, label: 'Reticule zoom to', title: 'Zoom level at which reticule is hidden to improve performance' },
+            { kind: 'color', id: 'set-bm-proj-boundary', value: '#4a8a5a', label: 'Boundary', title: 'Colour of globe boundary lines including land and country boundaries' },
+            { kind: 'range', id: 'set-bm-proj-boundary-sw', min: 0, max: 5, step: 0.05, value: 1, label: 'Boundary width', title: 'Width of globe boundary lines including land and country boundaries' },
             { type: 'html', html: '<hr /><div class="pt-palette-subhead"><i class="bi bi-globe-americas me-1"></i>Features</div>' },
-            { kind: 'range', id: 'set-bm-features-detail', min: 0, max: 10, step: 1, value: 0, label: 'Detail' },
-            { kind: 'range', id: 'set-bm-features-hide-zoom', min: 1, max: 12, step: 0.25, value: 12, label: 'Hide features in view mode at zoom' },
+            { kind: 'range', id: 'set-bm-features-detail', min: 0, max: 10, step: 1, value: 0, label: 'Detail', title: 'Level of detail for globe features' },
+            { kind: 'range', id: 'set-bm-features-hide-zoom', min: 1, max: 12, step: 0.25, value: 12, label: 'Features zoom to', title: 'Zoom level at which globe features are hidden to improve performance' },
             _sxCheckboxRow({ id: 'set-bm-globe-on', text: 'Show globe land' }),
             { kind: 'color', id: 'set-bm-water', value: '#02292e', label: 'Water' },
             { kind: 'color', id: 'set-bm-land', value: '#1a3a2a', label: 'Land' },
@@ -394,6 +404,7 @@ function _buildSettingsPanel() {
       title: 'Map Frame',
       icon: 'bi bi-bounding-box-circles',
       rows: [
+        { type: 'row', rowId: 'settings-frame-view-note', rowStyle: 'display:none', rowClass: 'pt-palette-row--span', controlHTML: '<small class="text-muted"><i class="bi bi-lock me-1"></i>Map frame options are only editable in Layout mode.</small>' },
         { kind: 'select', id: 'set-fr-aspect', className: 'form-select form-select-sm sx-setting-input pt-palette-select', label: 'Aspect ratio', options: [{ value: 'square', label: '1:1 (Square)' }, { value: 'a4Portrait', label: 'A4 Portrait (210:297)' }, { value: 'a4Landscape', label: 'A4 Landscape (297:210)' }, { value: 'slideStandard', label: 'Slide Standard (4:3)' }, { value: 'slideWide', label: 'Slide Wide (16:9)' }] },
         _sxCheckboxRow({ id: 'set-fr-fill-on', text: 'Background fill' }),
         { kind: 'color', id: 'set-fr-fill', value: '#ffffff', label: 'Fill colour' },
@@ -461,6 +472,9 @@ function _buildSettingsPanel() {
     }),
   ];
 
+  const topSectionHTML = sections[0] || '';
+  const scrollingSectionsHTML = sections.slice(1).join('\n');
+
   return `
 <div id="settings-panel" class="sx-side-panel sx-panel-right">
   ${buildSidePanelHeaderHTML({
@@ -475,7 +489,10 @@ function _buildSettingsPanel() {
     <div id="settings-none" class="sx-settings-placeholder" data-palette-role="empty">
       <p class="text-muted">Select a layer to edit its settings</p>
     </div>
-    ${sections.join('\n')}
+    ${topSectionHTML}
+    <div id="settings-detail-scroll" class="sx-settings-detail-scroll">
+      ${scrollingSectionsHTML}
+    </div>
   </div>
 </div>`;
 }
