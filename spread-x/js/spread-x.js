@@ -10,6 +10,7 @@ import { createCommands } from '@artic-network/pearcore/commands.js';
 import { createGraphicsExporter } from '@artic-network/pearcore/graphics-export.js';
 import {
   createSidePanelController,
+  createDeclarativeOptionsController,
   initSectionAccordion,
   loadSettings,
   saveSettings as _saveSettings,
@@ -60,6 +61,7 @@ import {
   resolveGeojsonAdaptiveDetailPercent,
   resolveLayerGeoJSON,
 } from './core/vector-layer-utils.js';
+import { createSpreadXOptionsPanelProfile } from './options-panel-profile.js';
 
 // ── Command definitions ──────────────────────────────────────────────────
 
@@ -804,9 +806,30 @@ export async function app(opts = {}) {
 
   _adoptPearcoreToolPalette(settingsPanelBody);
 
+  const settingsOptionsProfile = createSpreadXOptionsPanelProfile({
+    root: settingsPanelBody,
+    getSelectedLayerType: () => layers.find(l => l.id === selectedId)?.type || null,
+  });
+  const settingsOptionsController = createDeclarativeOptionsController({
+    root: settingsPanel || document,
+    scopeSelector: '#palette-panel-body',
+    rules: settingsOptionsProfile.rules,
+    cascades: settingsOptionsProfile.cascades,
+  });
+
   const settingsAccordion = initSectionAccordion(settingsPanel, {
     storageKey: storageKey ? `${storageKey}.settings-sections` : 'spread-x.settings-sections',
     defaultSectionId: 'base-map',
+    sectionPolicy: {
+      'settings-basemap': {
+        forcePinned: true,
+        forceOpen: true,
+        lockPinned: true,
+        lockOpen: true,
+        hidePinControl: true,
+        hideChevronControl: true,
+      },
+    },
   });
   settingsAccordion.unlock();
 
@@ -1791,7 +1814,8 @@ export async function app(opts = {}) {
     { layerType: LAYER_TYPES.POINTS, sectionId: 'settings-points' },
     { layerType: LAYER_TYPES.TREE, sectionId: 'settings-tree' },
   ];
-  const SETTINGS_PALETTE_IDS = SETTINGS_PALETTES.map(palette => palette.sectionId);
+  const BASEMAP_MODE_SECTION_IDS = ['settings-basemap-globe', 'settings-basemap-geographic'];
+  const SETTINGS_PALETTE_IDS = [...SETTINGS_PALETTES.map(palette => palette.sectionId), ...BASEMAP_MODE_SECTION_IDS];
   const basemapStatusController = createBasemapStatusController({
     getEl: $,
     getLayers: () => layers,
@@ -1891,6 +1915,8 @@ export async function app(opts = {}) {
 
   function _syncBasemapLayoutLockUI(layer) {
     const sec = $('settings-basemap');
+    const globeSec = $('settings-basemap-globe');
+    const geographicSec = $('settings-basemap-geographic');
     if (!sec) return;
     const note = $('settings-basemap-layout-note');
     const readOnlyPanel = $('settings-basemap-readonly');
@@ -1899,6 +1925,10 @@ export async function app(opts = {}) {
 
     if (note) note.style.display = readOnly ? '' : 'none';
     if (readOnlyPanel) readOnlyPanel.style.display = readOnly ? '' : 'none';
+    if (readOnly) {
+      if (globeSec) globeSec.style.display = 'none';
+      if (geographicSec) geographicSec.style.display = 'none';
+    }
 
     const sectionInner = sec.querySelector(':scope > .pt-section-body > .pt-section-body-inner') || sec;
     for (const child of sectionInner.children) {
@@ -1934,6 +1964,18 @@ export async function app(opts = {}) {
     $('setting-layer-name').value = layer.name;
     $('setting-layer-opacity').value = layer.opacity;
 
+    const nameRow = $('setting-layer-name')?.closest('.sx-setting-row, .pt-palette-row');
+    if (nameRow) {
+      const canRename = layer.type !== LAYER_TYPES.BASEMAP && layer.type !== LAYER_TYPES.FRAME;
+      nameRow.style.display = canRename ? '' : 'none';
+    }
+
+    const opacityRow = $('setting-layer-opacity')?.closest('.sx-setting-row, .pt-palette-row');
+    if (opacityRow) {
+      const showOpacity = layer.type !== LAYER_TYPES.BASEMAP;
+      opacityRow.style.display = showOpacity ? '' : 'none';
+    }
+
     const basemapReadOnly = layer.type === LAYER_TYPES.BASEMAP && !_layoutMode;
     $('settings-common').style.display = basemapReadOnly ? 'none' : '';
 
@@ -1941,6 +1983,12 @@ export async function app(opts = {}) {
     const secId = SETTINGS_PALETTES.find(palette => palette.layerType === layer.type)?.sectionId || ('settings-' + layer.type);
     const sec = $(secId);
     if (sec) sec.style.display = '';
+    if (layer.type === LAYER_TYPES.BASEMAP) {
+      for (const modeSecId of BASEMAP_MODE_SECTION_IDS) {
+        const modeSec = $(modeSecId);
+        if (modeSec) modeSec.style.display = '';
+      }
+    }
 
     populateSettingsForLayer({
       layer,
@@ -1953,6 +2001,7 @@ export async function app(opts = {}) {
       getCurrentGeojsonSimplifyLevel: _currentGeojsonSimplifyLevel,
       autoGeojsonPerfPolicy: _autoGeojsonPerfPolicyForLayer,
     });
+    settingsOptionsController.evaluate();
     _syncBasemapLayoutLockUI(layer);
     if (layer.type === LAYER_TYPES.BASEMAP) _updateBasemapReadonlyPanel();
     _ensureSettingsSectionOpen(sec);
