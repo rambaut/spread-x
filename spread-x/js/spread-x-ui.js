@@ -103,7 +103,7 @@ function _buildSettingsPanel() {
 
     <!-- ── Base map ── -->
     <div id="settings-basemap" class="sx-settings-section" data-sec-id="settings-basemap" data-palette-role="layer-type" data-layer-type="basemap" style="display:none">
-      <h3><i class="bi bi-globe-americas"></i> Base Map</h3>
+      <h3><i class="bi bi-globe-americas"></i> BASE MAP</h3>
       <div id="settings-basemap-layout-note" class="sx-setting-row" style="display:none">
         <small class="text-muted">Base map styling is editable only in Layout mode. Use the Config button in the Base Map layer row to modify projection, basemap mode, and Natural Earth source settings.</small>
       </div>
@@ -140,21 +140,22 @@ function _buildSettingsPanel() {
       </div>
 
       <div class="sx-setting-row">
+        <label for="set-bm-bg">Backgound</label>
+        <input type="color" id="set-bm-bg" class="pt-palette-color" value="#ffffff" />
+      </div>
+
+      <div class="sx-setting-row">
         <label for="set-bm-mode">Base map mode</label>
         <select id="set-bm-mode" class="form-select form-select-sm sx-setting-input">
           <option value="globe">Globe</option>
           <option value="geographic">Natural Earth Geographic (WGS84)</option>
         </select>
       </div>
+    </div>
 
-      <div class="sx-setting-row">
-        <label for="set-bm-bg">Backgound</label>
-        <input type="color" id="set-bm-bg" class="pt-palette-color" value="#ffffff" />
-      </div>
-
-      <div id="settings-bm-globe-group">
-
+    <div id="settings-basemap-globe" class="sx-settings-section" data-sec-id="settings-basemap-globe" data-palette-role="layer-type" data-layer-type="basemap" style="display:none">
       <h3><i class="bi bi-globe2"></i> Globe</h3>
+      <div id="settings-bm-globe-group">
 
       <div class="sx-setting-row">
         <label for="set-bm-projection">Projection</label>
@@ -312,7 +313,7 @@ function _buildSettingsPanel() {
         <input type="range" id="set-bm-proj-boundary-sw" class="form-range" min="0" max="5" step="0.05" value="1" />
       </div>
       <hr />
-      <h3><i class="bi bi-globe-americas"></i> Features</h3>
+      <div class="pt-palette-subhead"><i class="bi bi-globe-americas me-1"></i>Features</div>
       <div class="sx-setting-row">
         <label for="set-bm-features-detail">Detail</label>
         <input type="range" id="set-bm-features-detail" class="form-range" min="0" max="10" step="1" value="0" />
@@ -356,10 +357,11 @@ function _buildSettingsPanel() {
         <input type="range" id="set-bm-globe-outline-sw" class="form-range" min="0" max="5" step="0.05" value="0.5" />
       </div>
       </div>
+    </div>
 
+    <div id="settings-basemap-geographic" class="sx-settings-section" data-sec-id="settings-basemap-geographic" data-palette-role="layer-type" data-layer-type="basemap" style="display:none">
+      <h3><i class="bi bi-map"></i> Natural Earth</h3>
       <div id="settings-bm-geographic-group" class="pt-palette-grid" style="display:none">
-        <hr />
-        <h3><i class="bi bi-map"></i> Natural Earth Geographic</h3>
         <div class="pt-palette-row" title="Geographic coordinate reference system">
           <span class="pt-palette-label">Datum</span>
           <input type="text" class="form-control form-control-sm sx-setting-input" value="WGS84" readonly />
