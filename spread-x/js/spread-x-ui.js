@@ -72,94 +72,83 @@ function _buildLayerPanel() {
 
 // ── Settings panel (right) ────────────────────────────────────────────────
 
+function _sxCheckboxRow(opts = {}) {
+  const {
+    id,
+    text,
+    checked = true,
+    title = '',
+    rowId = '',
+    rowStyle = '',
+  } = opts;
+
+  const checkedAttr = checked ? ' checked' : '';
+  return {
+    rowId,
+    rowStyle,
+    title,
+    label: text,
+    controlHTML: `<label class="d-flex align-items-center gap-2 m-0" style="grid-column: 2 / -1;"><input type="checkbox" id="${id}" class="form-check-input"${checkedAttr} /> ${text}</label>`,
+  };
+}
+
+function _sxSettingsSection(def = {}) {
+  const {
+    id,
+    secId = id,
+    role = 'layer-type',
+    layerType = '',
+    className = 'sx-settings-section',
+    title = '',
+    icon = '',
+    rows = [],
+    items = [],
+    style = 'display:none',
+  } = def;
+
+  const titleHTML = title
+    ? `<h3>${icon ? `<i class="${icon}"></i> ` : ''}${title}</h3>`
+    : '';
+  const rowsHTML = rows.map(row => buildPaletteRowHTML(row)).join('');
+  const itemsHTML = items.map(item => buildPaletteSectionItemHTML(item)).join('');
+
+  return `<div id="${id}" class="${className}" data-sec-id="${secId}" data-palette-role="${role}" data-layer-type="${layerType}" style="${style}">${titleHTML}${rowsHTML}${itemsHTML}</div>`;
+}
+
 function _buildSettingsPanel() {
-  return `
-<div id="settings-panel" class="sx-side-panel sx-panel-right">
-  ${buildSidePanelHeaderHTML({
-    id: 'palette-panel-header',
-    leftHTML: '<h2 class="pt-side-panel-title"><i class="bi bi-gear me-1"></i>Layer Settings</h2>',
-    side: 'right',
-    buttonOrder: 'close-pin',
-    pinButtonId: 'btn-palette-pin',
-    closeButtonId: 'btn-palette-close',
-  })}
-  <div class="sx-panel-body" id="palette-panel-body">
+  const projectionOptionsHTML = `
+          <optgroup label="Pseudocylindrical">
+            <option value="geoNaturalEarth1" selected>Natural Earth</option>
+            <option value="geoEqualEarth">Equal Earth</option>
+            <option value="geoRobinson">Robinson</option>
+            <option value="geoMollweide">Mollweide</option>
+          </optgroup>
+          <optgroup label="Cylindrical">
+            <option value="geoEquirectangular">Equirectangular</option>
+            <option value="geoMercator">Mercator</option>
+          </optgroup>
+          <optgroup label="Azimuthal">
+            <option value="geoOrthographic">Orthographic</option>
+            <option value="geoAzimuthalEqualArea">Azimuthal Equal Area</option>
+            <option value="geoStereographic">Stereographic</option>
+          </optgroup>
+          <optgroup label="Conic">
+            <option value="geoAlbers">Albers</option>
+            <option value="geoConicConformal">Conic Conformal</option>
+          </optgroup>
+          <optgroup label="Compromise">
+            <option value="geoWinkel3">Winkel Tripel</option>
+            <option value="geoHammer">Hammer</option>
+          </optgroup>
+          <optgroup label="Quincuncial">
+            <option value="geoPeirceQuincuncial">Peirce Quincuncial</option>
+          </optgroup>`;
 
-    <div id="settings-none" class="sx-settings-placeholder" data-palette-role="empty">
-      <p class="text-muted">Select a layer to edit its settings</p>
-    </div>
-
-    <!-- ── Common (shown for every layer) ── -->
-    <div id="settings-common" class="sx-settings-section" data-sec-id="settings-common" data-palette-role="shared" data-layer-type="shared" style="display:none">
-      <div class="sx-setting-row">
-        <label for="setting-layer-name">Name</label>
-        <input type="text" id="setting-layer-name" class="form-control form-control-sm sx-setting-input" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="setting-layer-opacity">Opacity</label>
-        <input type="range" id="setting-layer-opacity" class="form-range" min="0" max="1" step="0.05" value="1" />
-      </div>
-    </div>
-
-    <!-- ── Base map ── -->
-    <div id="settings-basemap" class="sx-settings-section" data-sec-id="settings-basemap" data-palette-role="layer-type" data-layer-type="basemap" style="display:none">
-      <h3><i class="bi bi-globe-americas"></i> BASE MAP</h3>
-      <div id="settings-basemap-layout-note" class="sx-setting-row" style="display:none">
-        <small class="text-muted">Base map styling is editable only in Layout mode. Use the Config button in the Base Map layer row to modify projection, basemap mode, and Natural Earth source settings.</small>
-      </div>
-      <div id="settings-basemap-readonly" style="display:none">
-        <div class="sx-setting-row">
-          <label>Mode choices</label>
-          <span id="bm-ro-mode-choices" class="sx-setting-value"></span>
-        </div>
-        <div class="sx-setting-row">
-          <label>Source choices</label>
-          <span id="bm-ro-source-choices" class="sx-setting-value"></span>
-        </div>
-        <hr />
-        <div class="sx-setting-row">
-          <label>Current mode</label>
-          <span id="bm-ro-mode" class="sx-setting-value"></span>
-        </div>
-        <div class="sx-setting-row">
-          <label>Current source</label>
-          <span id="bm-ro-source" class="sx-setting-value"></span>
-        </div>
-        <div class="sx-setting-row">
-          <label>Zoom factor</label>
-          <span id="bm-ro-zoom" class="sx-setting-value"></span>
-        </div>
-        <div class="sx-setting-row">
-          <label>Viewport center</label>
-          <span id="bm-ro-center" class="sx-setting-value"></span>
-        </div>
-        <div class="sx-setting-row">
-          <label>Detail level</label>
-          <span id="bm-ro-detail" class="sx-setting-value"></span>
-        </div>
-      </div>
-
-      <div class="sx-setting-row">
-        <label for="set-bm-bg">Backgound</label>
-        <input type="color" id="set-bm-bg" class="pt-palette-color" value="#ffffff" />
-      </div>
-
-      <div class="sx-setting-row">
-        <label for="set-bm-mode">Base map mode</label>
-        <select id="set-bm-mode" class="form-select form-select-sm sx-setting-input">
-          <option value="globe">Globe</option>
-          <option value="geographic">Natural Earth Geographic (WGS84)</option>
-        </select>
-      </div>
-    </div>
-
-    <div id="settings-basemap-globe" class="sx-settings-section" data-sec-id="settings-basemap-globe" data-palette-role="layer-type" data-layer-type="basemap" style="display:none">
-      <h3><i class="bi bi-globe2"></i> Globe</h3>
-      <div id="settings-bm-globe-group">
-
-      <div class="sx-setting-row">
-        <label for="set-bm-projection">Projection</label>
-        <select id="set-bm-projection" class="form-select form-select-sm sx-setting-input">
+  /*
+   * Full projection list retained for quick restore.
+   * Re-enable by swapping this constant back into projectionOptionsHTML.
+   *
+  const projectionOptionsHTML = `
           <optgroup label="Pseudocylindrical">
             <option value="geoNaturalEarth1" selected>Natural Earth</option>
             <option value="geoNaturalEarth2">Natural Earth II</option>
@@ -275,329 +264,215 @@ function _buildSettingsPanel() {
           <optgroup label="Quincuncial">
             <option value="geoGringortenQuincuncial">Gringorten Quincuncial</option>
             <option value="geoPeirceQuincuncial">Peirce Quincuncial</option>
-          </optgroup>
-        </select>
-      </div>
-      <div class="sx-setting-row">
-        <label>
-          <input type="checkbox" id="set-bm-grat" class="form-check-input" checked />
-          Reticule (graticule)
-        </label>
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-grat-step">Reticule step (°)</label>
-        <input type="range" id="set-bm-grat-step" class="form-range" min="5" max="30" step="5" value="10" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-grat-stroke">Reticule colour</label>
-        <input type="color" id="set-bm-grat-stroke" class="pt-palette-color" value="#ffffff" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-grat-width">Reticule width</label>
-        <input type="range" id="set-bm-grat-width" class="form-range" min="0" max="3" step="0.05" value="0.5" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-grat-opacity">Reticule opacity</label>
-        <input type="range" id="set-bm-grat-opacity" class="form-range" min="0" max="100" step="1" value="10" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-grat-hide-zoom">Hide reticule in view mode at zoom</label>
-        <input type="range" id="set-bm-grat-hide-zoom" class="form-range" min="1" max="12" step="0.25" value="12" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-proj-boundary">Boundary</label>
-        <input type="color" id="set-bm-proj-boundary" class="pt-palette-color" value="#4a8a5a" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-proj-boundary-sw">Boundary width</label>
-        <input type="range" id="set-bm-proj-boundary-sw" class="form-range" min="0" max="5" step="0.05" value="1" />
-      </div>
-      <hr />
-      <div class="pt-palette-subhead"><i class="bi bi-globe-americas me-1"></i>Features</div>
-      <div class="sx-setting-row">
-        <label for="set-bm-features-detail">Detail</label>
-        <input type="range" id="set-bm-features-detail" class="form-range" min="0" max="10" step="1" value="0" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-features-hide-zoom">Hide features in view mode at zoom</label>
-        <input type="range" id="set-bm-features-hide-zoom" class="form-range" min="1" max="12" step="0.25" value="12" />
-      </div>
-      <div class="sx-setting-row">
-        <label>
-          <input type="checkbox" id="set-bm-globe-on" class="form-check-input" checked />
-          Show globe land
-        </label>
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-water">Water</label>
-        <input type="color" id="set-bm-water" class="pt-palette-color" value="#02292e" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-land">Land</label>
-        <input type="color" id="set-bm-land" class="pt-palette-color" value="#1a3a2a" />
-      </div>
-      <div class="sx-setting-row">
-        <label>
-          <input type="checkbox" id="set-bm-land-boundaries" class="form-check-input" checked />
-          Land boundaries
-        </label>
-      </div>
-      <div class="sx-setting-row">
-        <label>
-          <input type="checkbox" id="set-bm-country-boundaries" class="form-check-input" checked />
-          Country boundaries
-        </label>
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-globe-outline">Outlines</label>
-        <input type="color" id="set-bm-globe-outline" class="pt-palette-color" value="#4a8a5a" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-bm-globe-outline-sw">Outline width</label>
-        <input type="range" id="set-bm-globe-outline-sw" class="form-range" min="0" max="5" step="0.05" value="0.5" />
-      </div>
-      </div>
+          </optgroup>`;
+  */
+
+  const sections = [
+    _sxSettingsSection({
+      id: 'settings-common',
+      secId: 'settings-common',
+      role: 'shared',
+      layerType: 'shared',
+      rows: [
+        { label: 'Name', controlHTML: '<input type="text" id="setting-layer-name" class="form-control form-control-sm sx-setting-input" />' },
+        { label: 'Opacity', controlHTML: '<input type="range" id="setting-layer-opacity" class="form-range" min="0" max="1" step="0.05" value="1" />' },
+      ],
+    }),
+
+    _sxSettingsSection({
+      id: 'settings-basemap',
+      secId: 'settings-basemap',
+      layerType: 'basemap',
+      title: 'BASE MAP',
+      icon: 'bi bi-globe-americas',
+      rows: [
+        { rowId: 'settings-basemap-layout-note', rowClass: 'pt-palette-row--span', rowStyle: 'display:none', controlHTML: '<small class="text-muted">Base map styling is editable only in Layout mode. Use the Config button in the Base Map layer row to modify projection, basemap mode, and Natural Earth source settings.</small>' },
+        { rowClass: 'pt-palette-row--span', rowStyle: 'display:none', controlHTML: '<div id="settings-basemap-readonly" style="display:none"><div class="pt-palette-row"><span class="pt-palette-label">Mode choices</span><span id="bm-ro-mode-choices" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Source choices</span><span id="bm-ro-source-choices" class="sx-setting-value"></span></div><hr /><div class="pt-palette-row"><span class="pt-palette-label">Current mode</span><span id="bm-ro-mode" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Current source</span><span id="bm-ro-source" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Zoom factor</span><span id="bm-ro-zoom" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Viewport center</span><span id="bm-ro-center" class="sx-setting-value"></span></div><div class="pt-palette-row"><span class="pt-palette-label">Detail level</span><span id="bm-ro-detail" class="sx-setting-value"></span></div></div>' },
+        { kind: 'color', id: 'set-bm-bg', value: '#ffffff', label: 'Backgound' },
+        {
+          kind: 'select',
+          id: 'set-bm-mode',
+          label: 'Base map mode',
+          className: 'form-select form-select-sm sx-setting-input pt-palette-select',
+          options: [
+            { value: 'globe', label: 'Globe' },
+            { value: 'geographic', label: 'Natural Earth Geographic (WGS84)' },
+          ],
+        },
+      ],
+    }),
+
+    _sxSettingsSection({
+      id: 'settings-basemap-globe',
+      secId: 'settings-basemap-globe',
+      layerType: 'basemap',
+      title: 'Globe',
+      icon: 'bi bi-globe2',
+      items: [
+        {
+          type: 'group',
+          id: 'settings-bm-globe-group',
+          className: 'pt-palette-grid',
+          items: [
+            { kind: 'select', id: 'set-bm-projection', className: 'form-select form-select-sm sx-setting-input pt-palette-select', label: 'Projection', optionsHTML: projectionOptionsHTML },
+            _sxCheckboxRow({ id: 'set-bm-grat', text: 'Reticule (graticule)' }),
+            { kind: 'range', id: 'set-bm-grat-step', min: 5, max: 30, step: 5, value: 10, label: 'Reticule step (°)' },
+            { kind: 'color', id: 'set-bm-grat-stroke', value: '#ffffff', label: 'Reticule colour' },
+            { kind: 'range', id: 'set-bm-grat-width', min: 0, max: 3, step: 0.05, value: 0.5, label: 'Reticule width' },
+            { kind: 'range', id: 'set-bm-grat-opacity', min: 0, max: 100, step: 1, value: 10, label: 'Reticule opacity' },
+            { kind: 'range', id: 'set-bm-grat-hide-zoom', min: 1, max: 12, step: 0.25, value: 12, label: 'Hide reticule in view mode at zoom' },
+            { kind: 'color', id: 'set-bm-proj-boundary', value: '#4a8a5a', label: 'Boundary' },
+            { kind: 'range', id: 'set-bm-proj-boundary-sw', min: 0, max: 5, step: 0.05, value: 1, label: 'Boundary width' },
+            { type: 'html', html: '<hr /><div class="pt-palette-subhead"><i class="bi bi-globe-americas me-1"></i>Features</div>' },
+            { kind: 'range', id: 'set-bm-features-detail', min: 0, max: 10, step: 1, value: 0, label: 'Detail' },
+            { kind: 'range', id: 'set-bm-features-hide-zoom', min: 1, max: 12, step: 0.25, value: 12, label: 'Hide features in view mode at zoom' },
+            _sxCheckboxRow({ id: 'set-bm-globe-on', text: 'Show globe land' }),
+            { kind: 'color', id: 'set-bm-water', value: '#02292e', label: 'Water' },
+            { kind: 'color', id: 'set-bm-land', value: '#1a3a2a', label: 'Land' },
+            _sxCheckboxRow({ id: 'set-bm-land-boundaries', text: 'Land boundaries' }),
+            _sxCheckboxRow({ id: 'set-bm-country-boundaries', text: 'Country boundaries' }),
+            { kind: 'color', id: 'set-bm-globe-outline', value: '#4a8a5a', label: 'Outlines' },
+            { kind: 'range', id: 'set-bm-globe-outline-sw', min: 0, max: 5, step: 0.05, value: 0.5, label: 'Outline width' },
+          ],
+        },
+      ],
+    }),
+
+    _sxSettingsSection({
+      id: 'settings-basemap-geographic',
+      secId: 'settings-basemap-geographic',
+      layerType: 'basemap',
+      title: 'Natural Earth',
+      icon: 'bi bi-map',
+      items: [
+        {
+          type: 'group',
+          id: 'settings-bm-geographic-group',
+          className: 'pt-palette-grid',
+          style: 'display:none',
+          items: [
+            { label: 'Datum', title: 'Geographic coordinate reference system', controlHTML: '<input type="text" class="form-control form-control-sm sx-setting-input" value="WGS84" readonly />' },
+            { kind: 'select', id: 'set-bm-geographic-source', title: 'Choose raster or vector Natural Earth data for geographic mode', className: 'form-select form-select-sm sx-setting-input pt-palette-select', label: 'Source', options: [{ value: 'raster', label: 'Natural Earth Raster' }, { value: 'vector', label: 'Natural Earth Vector' }] },
+            {
+              type: 'group',
+              id: 'settings-bm-geographic-raster-group',
+              className: 'pt-palette-grid',
+              items: [
+                { kind: 'select', id: 'set-bm-geographic-raster-set', title: 'Raster map set used while zooming geographic mode', className: 'form-select form-select-sm sx-setting-input pt-palette-select', label: 'Raster set', options: [{ value: 'NE1', label: 'NE1' }] },
+                { type: 'row', rowClass: 'pt-palette-row--span', controlHTML: '<small class="text-muted">Automatically switches from 50M to HR raster as you zoom in.</small>' },
+              ],
+            },
+            {
+              type: 'group',
+              id: 'settings-bm-geographic-vector-group',
+              className: 'pt-palette-grid',
+              style: 'display:none',
+              items: [
+                { kind: 'select', id: 'set-bm-geographic-vector-scale', title: 'Vector layer detail used in geographic mode', className: 'form-select form-select-sm sx-setting-input pt-palette-select', label: 'Vector land scale', options: [{ value: '110m', label: '110m' }, { value: '50m', label: '50m' }, { value: '10m', label: '10m' }] },
+                { kind: 'color', id: 'set-bm-geographic-ocean', value: '#0d2f40', title: 'Ocean fill colour used in vector geographic mode', label: 'Ocean colour' },
+                { kind: 'color', id: 'set-bm-geographic-land', value: '#9aa876', title: 'Land fill colour used in vector geographic mode', label: 'Land colour' },
+              ],
+            },
+            { type: 'html', html: '<hr />' },
+            _sxCheckboxRow({ id: 'set-bm-geographic-countries-on', text: 'Show country polygons', title: 'Show country polygons' }),
+            { kind: 'select', id: 'set-bm-geographic-country-scale', title: 'Country boundary detail scale', className: 'form-select form-select-sm sx-setting-input pt-palette-select', label: 'Country scale', options: [{ value: '110m', label: '110m' }, { value: '50m', label: '50m' }, { value: '10m', label: '10m' }] },
+            { kind: 'color', id: 'set-bm-geographic-country-stroke', value: '#3e3e3e', title: 'Country boundary stroke colour', label: 'Country colour' },
+            { kind: 'range', id: 'set-bm-geographic-country-width', min: 0, max: 5, step: 0.05, value: 0.45, title: 'Country boundary stroke width', label: 'Country stroke width' },
+            { kind: 'range', id: 'set-bm-geographic-country-opacity', min: 0, max: 1, step: 0.05, value: 0.65, title: 'Country boundary opacity', label: 'Country opacity' },
+          ],
+        },
+      ],
+    }),
+
+    _sxSettingsSection({
+      id: 'settings-frame',
+      secId: 'settings-frame',
+      layerType: 'frame',
+      title: 'Map Frame',
+      icon: 'bi bi-bounding-box-circles',
+      rows: [
+        { kind: 'select', id: 'set-fr-aspect', className: 'form-select form-select-sm sx-setting-input pt-palette-select', label: 'Aspect ratio', options: [{ value: 'square', label: '1:1 (Square)' }, { value: 'a4Portrait', label: 'A4 Portrait (210:297)' }, { value: 'a4Landscape', label: 'A4 Landscape (297:210)' }, { value: 'slideStandard', label: 'Slide Standard (4:3)' }, { value: 'slideWide', label: 'Slide Wide (16:9)' }] },
+        _sxCheckboxRow({ id: 'set-fr-fill-on', text: 'Background fill' }),
+        { kind: 'color', id: 'set-fr-fill', value: '#ffffff', label: 'Fill colour' },
+        { kind: 'range', id: 'set-fr-fill-op', min: 0, max: 1, step: 0.05, value: 1, label: 'Fill opacity' },
+        { kind: 'color', id: 'set-fr-stroke', value: '#d8d8d8', label: 'Boundary stroke' },
+        { kind: 'range', id: 'set-fr-sw', min: 0.2, max: 5, step: 0.05, value: 1.5, label: 'Boundary width' },
+        { kind: 'range', id: 'set-fr-padding', min: 0, max: 48, step: 1, value: 8, label: 'Frame padding' },
+      ],
+    }),
+
+    _sxSettingsSection({
+      id: 'settings-geojson',
+      secId: 'settings-geojson',
+      layerType: 'geojson',
+      title: 'Style',
+      icon: 'bi bi-hexagon',
+      rows: [
+        _sxCheckboxRow({ id: 'set-gj-hover-on', text: 'Hover features' }),
+        _sxCheckboxRow({ id: 'set-gj-select-on', text: 'Select features' }),
+        { kind: 'color', id: 'set-gj-fill', value: '#2aa198', label: 'Fill' },
+        { kind: 'range', id: 'set-gj-fill-op', min: 0, max: 1, step: 0.05, value: 0.3, label: 'Fill opacity' },
+        { kind: 'color', id: 'set-gj-stroke', value: '#2aa198', label: 'Stroke' },
+        { kind: 'range', id: 'set-gj-sw', min: 0, max: 5, step: 0.05, value: 1, label: 'Stroke width' },
+      ],
+      items: [
+        { type: 'html', html: '<hr /><h3><i class="bi bi-speedometer2"></i> Performance</h3>' },
+        { type: 'row', kind: 'range', id: 'set-gj-min-zoom', min: 1, max: 12, step: 0.25, value: 2, label: 'Min zoom to render' },
+        { type: 'row', label: 'Detail', controlHTML: '<input type="range" id="set-gj-simplify" class="form-range" min="0" max="4" step="1" value="4" /><span id="set-gj-simplify-readout" class="sx-range-value">100%</span>' },
+        { type: 'row', ..._sxCheckboxRow({ id: 'set-gj-adaptive-simplify', text: 'Adaptive' }) },
+      ],
+    }),
+
+    _sxSettingsSection({
+      id: 'settings-points',
+      secId: 'settings-points',
+      layerType: 'points',
+      title: 'Points',
+      icon: 'bi bi-geo-alt',
+      rows: [
+        { kind: 'range', id: 'set-pt-radius', min: 1, max: 20, step: 0.5, value: 4, label: 'Radius' },
+        { kind: 'color', id: 'set-pt-fill', value: '#b58900', label: 'Fill' },
+        { kind: 'range', id: 'set-pt-fill-op', min: 0, max: 1, step: 0.05, value: 0.8, label: 'Fill opacity' },
+        { kind: 'color', id: 'set-pt-stroke', value: '#ffffff', label: 'Stroke' },
+        { kind: 'range', id: 'set-pt-sw', min: 0, max: 5, step: 0.05, value: 1, label: 'Stroke width' },
+        { kind: 'select', id: 'set-pt-label', className: 'form-select form-select-sm sx-setting-input pt-palette-select', label: 'Label field', options: [{ value: '', label: 'None' }] },
+        { kind: 'range', id: 'set-pt-label-sz', min: 6, max: 24, step: 1, value: 10, label: 'Label size' },
+      ],
+    }),
+
+    _sxSettingsSection({
+      id: 'settings-tree',
+      secId: 'settings-tree',
+      layerType: 'tree',
+      title: 'Tree',
+      icon: 'bi bi-diagram-3',
+      rows: [
+        { kind: 'select', id: 'set-tr-style', className: 'form-select form-select-sm sx-setting-input pt-palette-select', label: 'Branches', options: [{ value: 'greatcircle', label: 'Great circle' }, { value: 'straight', label: 'Straight line' }] },
+        { kind: 'color', id: 'set-tr-color', value: '#BF4B43', label: 'Branch colour' },
+        { kind: 'range', id: 'set-tr-width', min: 0.2, max: 5, step: 0.05, value: 1.5, label: 'Branch width' },
+        { kind: 'range', id: 'set-tr-op', min: 0, max: 1, step: 0.05, value: 0.8, label: 'Branch opacity' },
+        { kind: 'color', id: 'set-tr-node-color', value: '#BF4B43', label: 'Node colour' },
+        { kind: 'range', id: 'set-tr-node-r', min: 1, max: 10, step: 0.5, value: 3, label: 'Node radius' },
+        { kind: 'range', id: 'set-tr-node-op', min: 0, max: 1, step: 0.05, value: 0.8, label: 'Node opacity' },
+      ],
+    }),
+  ];
+
+  return `
+<div id="settings-panel" class="sx-side-panel sx-panel-right">
+  ${buildSidePanelHeaderHTML({
+    id: 'palette-panel-header',
+    leftHTML: '<h2 class="pt-side-panel-title"><i class="bi bi-gear me-1"></i>Layer Settings</h2>',
+    side: 'right',
+    buttonOrder: 'close-pin',
+    pinButtonId: 'btn-palette-pin',
+    closeButtonId: 'btn-palette-close',
+  })}
+  <div class="sx-panel-body" id="palette-panel-body">
+    <div id="settings-none" class="sx-settings-placeholder" data-palette-role="empty">
+      <p class="text-muted">Select a layer to edit its settings</p>
     </div>
-
-    <div id="settings-basemap-geographic" class="sx-settings-section" data-sec-id="settings-basemap-geographic" data-palette-role="layer-type" data-layer-type="basemap" style="display:none">
-      <h3><i class="bi bi-map"></i> Natural Earth</h3>
-      <div id="settings-bm-geographic-group" class="pt-palette-grid" style="display:none">
-        <div class="pt-palette-row" title="Geographic coordinate reference system">
-          <span class="pt-palette-label">Datum</span>
-          <input type="text" class="form-control form-control-sm sx-setting-input" value="WGS84" readonly />
-        </div>
-        <div class="pt-palette-row" title="Choose raster or vector Natural Earth data for geographic mode">
-          <span class="pt-palette-label">Source</span>
-          <select id="set-bm-geographic-source" class="form-select form-select-sm sx-setting-input">
-            <option value="raster">Natural Earth Raster</option>
-            <option value="vector">Natural Earth Vector</option>
-          </select>
-        </div>
-
-        <div id="settings-bm-geographic-raster-group" class="pt-palette-grid">
-          <div class="pt-palette-row" title="Raster map set used while zooming geographic mode">
-            <span class="pt-palette-label">Raster set</span>
-            <select id="set-bm-geographic-raster-set" class="form-select form-select-sm sx-setting-input">
-              <option value="NE1">NE1</option>
-            </select>
-          </div>
-          <div class="pt-palette-row--span">
-            <small class="text-muted">Automatically switches from 50M to HR raster as you zoom in.</small>
-          </div>
-        </div>
-
-        <div id="settings-bm-geographic-vector-group" class="pt-palette-grid" style="display:none">
-          <div class="pt-palette-row" title="Vector layer detail used in geographic mode">
-            <span class="pt-palette-label">Vector land scale</span>
-            <select id="set-bm-geographic-vector-scale" class="form-select form-select-sm sx-setting-input">
-              <option value="110m">110m</option>
-              <option value="50m">50m</option>
-              <option value="10m">10m</option>
-            </select>
-          </div>
-          <div class="pt-palette-row" title="Ocean fill colour used in vector geographic mode">
-            <span class="pt-palette-label">Ocean colour</span>
-            <input type="color" id="set-bm-geographic-ocean" class="pt-palette-color" value="#0d2f40" />
-          </div>
-          <div class="pt-palette-row" title="Land fill colour used in vector geographic mode">
-            <span class="pt-palette-label">Land colour</span>
-            <input type="color" id="set-bm-geographic-land" class="pt-palette-color" value="#9aa876" />
-          </div>
-        </div>
-
-        <hr />
-        <div class="pt-palette-row" title="Show country polygons">
-          <span class="pt-palette-label">Show country polygons</span>
-          <label class="d-flex align-items-center gap-2 m-0" style="grid-column: 2 / -1;">
-            <input type="checkbox" id="set-bm-geographic-countries-on" class="form-check-input" checked />
-            Show country polygons
-          </label>
-        </div>
-        <div class="pt-palette-row" title="Country boundary detail scale">
-          <span class="pt-palette-label">Country scale</span>
-          <select id="set-bm-geographic-country-scale" class="form-select form-select-sm sx-setting-input">
-            <option value="110m">110m</option>
-            <option value="50m">50m</option>
-            <option value="10m">10m</option>
-          </select>
-        </div>
-        <div class="pt-palette-row" title="Country boundary stroke colour">
-          <span class="pt-palette-label">Country colour</span>
-          <input type="color" id="set-bm-geographic-country-stroke" class="pt-palette-color" value="#3e3e3e" />
-        </div>
-        <div class="pt-palette-row" title="Country boundary stroke width">
-          <span class="pt-palette-label">Country stroke width</span>
-          <input type="range" id="set-bm-geographic-country-width" class="form-range" min="0" max="5" step="0.05" value="0.45" />
-        </div>
-        <div class="pt-palette-row" title="Country boundary opacity">
-          <span class="pt-palette-label">Country opacity</span>
-          <input type="range" id="set-bm-geographic-country-opacity" class="form-range" min="0" max="1" step="0.05" value="0.65" />
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Map frame ── -->
-    <div id="settings-frame" class="sx-settings-section" data-sec-id="settings-frame" data-palette-role="layer-type" data-layer-type="frame" style="display:none">
-      <h3><i class="bi bi-bounding-box-circles"></i> Map Frame</h3>
-      <div class="sx-setting-row">
-        <label for="set-fr-aspect">Aspect ratio</label>
-        <select id="set-fr-aspect" class="form-select form-select-sm sx-setting-input">
-          <option value="square">1:1 (Square)</option>
-          <option value="a4Portrait">A4 Portrait (210:297)</option>
-          <option value="a4Landscape">A4 Landscape (297:210)</option>
-          <option value="slideStandard">Slide Standard (4:3)</option>
-          <option value="slideWide">Slide Wide (16:9)</option>
-        </select>
-      </div>
-      <div class="sx-setting-row">
-        <label>
-          <input type="checkbox" id="set-fr-fill-on" class="form-check-input" checked />
-          Background fill
-        </label>
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-fr-fill">Fill colour</label>
-        <input type="color" id="set-fr-fill" class="pt-palette-color" value="#ffffff" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-fr-fill-op">Fill opacity</label>
-        <input type="range" id="set-fr-fill-op" class="form-range" min="0" max="1" step="0.05" value="1" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-fr-stroke">Boundary stroke</label>
-        <input type="color" id="set-fr-stroke" class="pt-palette-color" value="#d8d8d8" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-fr-sw">Boundary width</label>
-        <input type="range" id="set-fr-sw" class="form-range" min="0.2" max="5" step="0.05" value="1.5" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-fr-padding">Frame padding</label>
-        <input type="range" id="set-fr-padding" class="form-range" min="0" max="48" step="1" value="8" />
-      </div>
-    </div>
-
-    <!-- ── Style ── -->
-    <div id="settings-geojson" class="sx-settings-section" data-sec-id="settings-geojson" data-palette-role="layer-type" data-layer-type="geojson" style="display:none">
-      <h3><i class="bi bi-hexagon"></i> Style</h3>
-      <div class="sx-setting-row">
-        <label>
-          <input type="checkbox" id="set-gj-hover-on" class="form-check-input" checked />
-          Hover features
-        </label>
-      </div>
-      <div class="sx-setting-row">
-        <label>
-          <input type="checkbox" id="set-gj-select-on" class="form-check-input" checked />
-          Select features
-        </label>
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-gj-fill">Fill</label>
-        <input type="color" id="set-gj-fill" class="pt-palette-color" value="#2aa198" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-gj-fill-op">Fill opacity</label>
-        <input type="range" id="set-gj-fill-op" class="form-range" min="0" max="1" step="0.05" value="0.3" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-gj-stroke">Stroke</label>
-        <input type="color" id="set-gj-stroke" class="pt-palette-color" value="#2aa198" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-gj-sw">Stroke width</label>
-        <input type="range" id="set-gj-sw" class="form-range" min="0" max="5" step="0.05" value="1" />
-      </div>
-      <hr />
-      <h3><i class="bi bi-speedometer2"></i> Performance</h3>
-      <div class="sx-setting-row">
-        <label for="set-gj-min-zoom">Min zoom to render</label>
-        <input type="range" id="set-gj-min-zoom" class="form-range" min="1" max="12" step="0.25" value="2" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-gj-simplify">Detail</label>
-        <input type="range" id="set-gj-simplify" class="form-range" min="0" max="4" step="1" value="4" />
-        <span id="set-gj-simplify-readout" class="sx-range-value">100%</span>
-      </div>
-      <div class="sx-setting-row">
-        <label>
-          <input type="checkbox" id="set-gj-adaptive-simplify" class="form-check-input" checked />
-          Adaptive
-        </label>
-      </div>
-    </div>
-
-    <!-- ── Points ── -->
-    <div id="settings-points" class="sx-settings-section" data-sec-id="settings-points" data-palette-role="layer-type" data-layer-type="points" style="display:none">
-      <h3><i class="bi bi-geo-alt"></i> Points</h3>
-      <div class="sx-setting-row">
-        <label for="set-pt-radius">Radius</label>
-        <input type="range" id="set-pt-radius" class="form-range" min="1" max="20" step="0.5" value="4" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-pt-fill">Fill</label>
-        <input type="color" id="set-pt-fill" class="pt-palette-color" value="#b58900" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-pt-fill-op">Fill opacity</label>
-        <input type="range" id="set-pt-fill-op" class="form-range" min="0" max="1" step="0.05" value="0.8" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-pt-stroke">Stroke</label>
-        <input type="color" id="set-pt-stroke" class="pt-palette-color" value="#ffffff" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-pt-sw">Stroke width</label>
-        <input type="range" id="set-pt-sw" class="form-range" min="0" max="5" step="0.05" value="1" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-pt-label">Label field</label>
-        <select id="set-pt-label" class="form-select form-select-sm sx-setting-input">
-          <option value="">None</option>
-        </select>
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-pt-label-sz">Label size</label>
-        <input type="range" id="set-pt-label-sz" class="form-range" min="6" max="24" step="1" value="10" />
-      </div>
-    </div>
-
-    <!-- ── Tree ── -->
-    <div id="settings-tree" class="sx-settings-section" data-sec-id="settings-tree" data-palette-role="layer-type" data-layer-type="tree" style="display:none">
-      <h3><i class="bi bi-diagram-3"></i> Tree</h3>
-      <div class="sx-setting-row">
-        <label for="set-tr-style">Branches</label>
-        <select id="set-tr-style" class="form-select form-select-sm sx-setting-input">
-          <option value="greatcircle">Great circle</option>
-          <option value="straight">Straight line</option>
-        </select>
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-tr-color">Branch colour</label>
-        <input type="color" id="set-tr-color" class="pt-palette-color" value="#BF4B43" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-tr-width">Branch width</label>
-        <input type="range" id="set-tr-width" class="form-range" min="0.2" max="5" step="0.05" value="1.5" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-tr-op">Branch opacity</label>
-        <input type="range" id="set-tr-op" class="form-range" min="0" max="1" step="0.05" value="0.8" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-tr-node-color">Node colour</label>
-        <input type="color" id="set-tr-node-color" class="pt-palette-color" value="#BF4B43" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-tr-node-r">Node radius</label>
-        <input type="range" id="set-tr-node-r" class="form-range" min="1" max="10" step="0.5" value="3" />
-      </div>
-      <div class="sx-setting-row">
-        <label for="set-tr-node-op">Node opacity</label>
-        <input type="range" id="set-tr-node-op" class="form-range" min="0" max="1" step="0.05" value="0.8" />
-      </div>
-    </div>
-
+    ${sections.join('\n')}
   </div>
 </div>`;
 }

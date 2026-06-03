@@ -792,9 +792,6 @@ export async function app(opts = {}) {
       row.classList.add('pt-palette-row');
       row.classList.remove('sx-setting-row');
     }
-    for (const lbl of rootEl.querySelectorAll('label')) {
-      lbl.classList.add('pt-palette-label');
-    }
     for (const val of rootEl.querySelectorAll('.sx-setting-value')) {
       val.classList.add('pt-val');
       val.classList.remove('sx-setting-value');
