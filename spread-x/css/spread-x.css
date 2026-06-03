@@ -350,13 +350,16 @@
 /* ── Layer controls (bottom of layer panel) ────────────────────────── */
 
 .sx-layer-add-row {
-  display: none;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
   padding: 8px 8px 6px;
 }
 
-body.layout-mode .sx-layer-add-row {
-  display: block;
-}
+.sx-layer-add-row #btn-add-layer { display: none; }
+body.layout-mode .sx-layer-add-row #btn-add-toolbar { display: none; }
+body.layout-mode .sx-layer-add-row #btn-add-layer { display: inline-flex; }
 
 .sx-layer-controls {
   display: flex;

@@ -1741,7 +1741,7 @@ export async function app(opts = {}) {
 
   $('btn-add-toolbar')?.addEventListener('click', e => {
     e.stopPropagation();
-    _openPresetModal();
+    _openImportModal('auto');
   });
   $('btn-add-layer')?.addEventListener('click', e => {
     e.stopPropagation();

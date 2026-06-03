@@ -43,8 +43,11 @@ function _buildLayerPanel() {
   })}
   <div id="palette-panel-body-left" class="sx-panel-body" style="display:flex;flex-direction:column">
     <div class="sx-layer-add-row">
-      <button id="btn-add-layer" class="btn btn-sm btn-outline-secondary" title="Add preset">
-        <i class="bi bi-plus-lg me-1"></i>Add preset
+      <button id="btn-add-toolbar" class="btn btn-sm btn-outline-primary" title="Add layer">
+        <i class="bi bi-plus-lg me-1"></i>Add Layer
+      </button>
+      <button id="btn-add-layer" class="btn btn-sm btn-outline-primary" title="Add preset">
+        <i class="bi bi-plus-lg me-1"></i>Add preset...
       </button>
     </div>
     <div id="layer-list" class="sx-layer-list" style="flex:1;overflow-y:auto"></div>
@@ -486,9 +489,7 @@ function _buildAppToolbar() {
         <i class="bi bi-layers"></i><i class="bi bi-caret-right ms-1"></i>
       </button>
       <div class="pt-toolbar-sep"></div>
-      <button id="btn-add-toolbar" class="btn btn-sm btn-outline-secondary" title="Add layer">
-        <i class="bi bi-plus-lg me-1"></i>Add Layer
-      </button>`,
+      `,
     centerHTML: `
       <span id="toolbar-title" class="text-muted" style="font-size:0.85rem">SPREAD-X</span>`,
     rightHTML: `
