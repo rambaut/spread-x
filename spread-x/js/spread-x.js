@@ -10,6 +10,7 @@ import { createCommands } from '@artic-network/pearcore/commands.js';
 import { createGraphicsExporter } from '@artic-network/pearcore/graphics-export.js';
 import {
   createSidePanelController,
+  createPanelResizeController,
   createDeclarativeOptionsController,
   initSectionAccordion,
   loadSettings,
@@ -714,6 +715,7 @@ export async function app(opts = {}) {
   const settingsPanel = $('settings-panel');
   const settingsPanelBody = $('palette-panel-body') || $('settings-panel-body');
   const leftPanelOpenKey = storageKey ? `${storageKey}.panel-left-open` : null;
+  const leftPanelWidthKey = storageKey ? `${storageKey}.panel-left-width` : null;
   const rightPanelOpenKey = storageKey ? `${storageKey}.panel-right-open` : null;
 
   function _readPanelOpenPref(key) {
@@ -735,9 +737,42 @@ export async function app(opts = {}) {
     } catch {}
   }
 
+  function _readPanelWidthPref(key) {
+    if (!key) return null;
+    try {
+      const raw = localStorage.getItem(key);
+      const width = Number(raw);
+      return Number.isFinite(width) && width > 0 ? width : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function _writePanelWidthPref(key, widthPx) {
+    if (!key || !Number.isFinite(widthPx)) return;
+    try {
+      localStorage.setItem(key, String(Math.round(widthPx)));
+    } catch {}
+  }
+
   const leftPanelOpenPref = _readPanelOpenPref(leftPanelOpenKey);
+  const leftPanelWidthPref = _readPanelWidthPref(leftPanelWidthKey);
   const rightPanelOpenPref = _readPanelOpenPref(rightPanelOpenKey);
   const hasSavedPanelOpenPreference = leftPanelOpenPref !== null || rightPanelOpenPref !== null;
+
+  function _setLeftPanelWidth(widthPx) {
+    if (!layerPanel || !Number.isFinite(widthPx)) return;
+    const clamped = Math.max(180, Math.min(520, widthPx));
+    const cssWidth = `${Math.round(clamped)}px`;
+    layerPanel.style.width = cssWidth;
+    document.documentElement.style.setProperty('--sx-layer-panel-width', cssWidth);
+  }
+
+  if (leftPanelWidthPref !== null) {
+    _setLeftPanelWidth(leftPanelWidthPref);
+  } else if (layerPanel) {
+    _setLeftPanelWidth(layerPanel.offsetWidth || 220);
+  }
 
   const layerPanelController = createSidePanelController({
     panel: layerPanel,
@@ -758,6 +793,24 @@ export async function app(opts = {}) {
   });
   layerPanelController.onChange((isOpen) => {
     _writePanelOpenPref(leftPanelOpenKey, isOpen);
+  });
+
+  createPanelResizeController({
+    panel: layerPanel,
+    handle: $('layer-panel-dragbar'),
+    side: 'left',
+    minWidth: 180,
+    maxWidth: 520,
+    ghostId: 'pt-panel-resize-ghost',
+    cssVarName: '--sx-layer-panel-width',
+    cssVarTarget: document.documentElement,
+    cursorTarget: document.body,
+    isEnabled: () => layerPanelController.isOpen(),
+    onCommit: (newWidthPx) => {
+      _setLeftPanelWidth(newWidthPx);
+      _writePanelWidthPref(leftPanelWidthKey, newWidthPx);
+      window.dispatchEvent(new Event('resize'));
+    },
   });
 
   const settingsPanelController = createSidePanelController({
@@ -1141,6 +1194,10 @@ export async function app(opts = {}) {
     return manifest?.name || manifest?.title || manifest?.folder || 'Preset Layer';
   }
 
+  function _presetCatalogFolder(manifest) {
+    return String(manifest?.catalogFolder || manifest?.folder || '').trim();
+  }
+
   function _presetDefaultColor(manifest) {
     const color = manifest?.color || manifest?.accentColor || '';
     return color || '#2aa198';
@@ -1291,7 +1348,7 @@ export async function app(opts = {}) {
     for (const entry of manifestRows) {
       const preset = entry.preset;
       const manifest = entry.manifest || preset;
-      const folder = String(manifest.folder || preset.folder || '');
+      const folder = String(preset.folder || manifest.folder || '');
       const features = Array.isArray(manifest.features) ? manifest.features : [];
       const levels = _presetDetailRowsFromManifest(manifest);
       const isAdded = _presetFolderAdded(folder);
@@ -1325,8 +1382,8 @@ export async function app(opts = {}) {
         const originalText = btn.textContent || 'Add';
         btn.disabled = true;
         btn.textContent = 'Loading...';
-        const folder = btn.dataset.presetAdd;
-        const presetEntry = _presetState.catalog.presets.find(item => item.folder === folder);
+        const folder = String(btn.dataset.presetAdd || '');
+        const presetEntry = _presetState.catalog.presets.find(item => String(item.folder || '') === folder);
         try {
           if (!presetEntry) {
             $('status-stats').textContent = 'Preset entry could not be found.';
@@ -1380,10 +1437,11 @@ export async function app(opts = {}) {
 
   function _presetModalShowConfig(manifest, { instanceName = '', selectedFeatures = null, selectedDetails = null, detailRows = null, editGroup = null } = {}) {
     if (!manifest) return;
+    const presetFolder = _presetCatalogFolder(manifest);
     _presetState.modal.mode = 'config';
     _presetState.modal.manifest = manifest;
-    _presetState.modal.source = manifest.folder
-      ? (_presetState.topologyByFolder.get(manifest.folder) || null)
+    _presetState.modal.source = presetFolder
+      ? (_presetState.topologyByFolder.get(presetFolder) || null)
       : null;
     _presetState.modal.editGroup = editGroup;
     _presetState.modal.featureSelection = selectedFeatures instanceof Set ? new Set(selectedFeatures) : _presetSelectedFeatures(manifest);
@@ -1418,7 +1476,7 @@ export async function app(opts = {}) {
     }
     if (nameInput) nameInput.value = _presetInstanceName(manifest, instanceName);
     if (label) label.textContent = _presetDefaultName(manifest);
-    if (folder) folder.textContent = manifest.folder || '';
+    if (folder) folder.textContent = presetFolder;
     if (description) description.setAttribute('title', manifest.description || '');
     if (license) license.textContent = manifest.license?.name || manifest.license || '';
     if (description) description.textContent = manifest.description || '';
@@ -1492,8 +1550,12 @@ export async function app(opts = {}) {
 
     const manifest = await loadPresetManifest({ fetchImpl: fetch, folder: entry.folder });
     if (!manifest) return null;
-    _presetState.manifests.set(entry.folder, manifest);
-    return manifest;
+    const hydratedManifest = {
+      ...manifest,
+      catalogFolder: String(entry.folder || ''),
+    };
+    _presetState.manifests.set(entry.folder, hydratedManifest);
+    return hydratedManifest;
   }
 
   function _closePresetModal() {
@@ -1514,7 +1576,8 @@ export async function app(opts = {}) {
       return false;
     }
 
-    const cachedSource = manifest.folder ? _presetState.topologyByFolder.get(manifest.folder) : null;
+    const presetFolder = _presetCatalogFolder(manifest);
+    const cachedSource = presetFolder ? _presetState.topologyByFolder.get(presetFolder) : null;
     if (!_presetState.modal.source && !cachedSource) {
       $('status-stats').textContent = `Loading preset source: ${manifest.name || manifest.folder}`;
     }
@@ -1528,8 +1591,8 @@ export async function app(opts = {}) {
       return false;
     }
     _presetState.modal.source = source;
-    if (manifest.folder) {
-      _presetState.topologyByFolder.set(manifest.folder, source);
+    if (presetFolder) {
+      _presetState.topologyByFolder.set(presetFolder, source);
     }
 
     if (cachedSource && requestedLevels.length) {
@@ -1543,7 +1606,7 @@ export async function app(opts = {}) {
         });
         if (merged) {
           _presetState.modal.source = merged;
-          if (manifest.folder) _presetState.topologyByFolder.set(manifest.folder, merged);
+          if (presetFolder) _presetState.topologyByFolder.set(presetFolder, merged);
         }
       }
     }
@@ -1763,6 +1826,44 @@ export async function app(opts = {}) {
   $('btn-preset-reset')?.addEventListener('click', () => _closePresetModal());
   $('btn-preset-apply')?.addEventListener('click', () => _closePresetModal());
   $('btn-preset-config-cancel')?.addEventListener('click', () => _presetModalShowBrowse());
+  $('btn-preset-features-all-on')?.addEventListener('click', () => {
+    const container = $('preset-feature-list');
+    if (!container) return;
+    container.querySelectorAll('[data-preset-feature]').forEach(input => {
+      input.checked = true;
+      const value = String(input.dataset.presetFeature || '').toLowerCase();
+      _presetState.modal.featureSelection.add(value);
+    });
+  });
+  $('btn-preset-features-all-off')?.addEventListener('click', () => {
+    const container = $('preset-feature-list');
+    if (!container) return;
+    container.querySelectorAll('[data-preset-feature]').forEach(input => {
+      input.checked = false;
+      const value = String(input.dataset.presetFeature || '').toLowerCase();
+      _presetState.modal.featureSelection.delete(value);
+    });
+  });
+  $('btn-preset-details-all-on')?.addEventListener('click', () => {
+    const container = $('preset-detail-list');
+    if (!container) return;
+    container.querySelectorAll('[data-preset-detail-enabled]').forEach(input => {
+      input.checked = true;
+      const level = Number(input.dataset.presetDetailEnabled);
+      const row = _presetState.modal.detailRows.find(item => item.level === level);
+      if (row) row.enabled = true;
+    });
+  });
+  $('btn-preset-details-all-off')?.addEventListener('click', () => {
+    const container = $('preset-detail-list');
+    if (!container) return;
+    container.querySelectorAll('[data-preset-detail-enabled]').forEach(input => {
+      input.checked = false;
+      const level = Number(input.dataset.presetDetailEnabled);
+      const row = _presetState.modal.detailRows.find(item => item.level === level);
+      if (row) row.enabled = false;
+    });
+  });
   $('btn-preset-progress-cancel')?.addEventListener('click', () => {
     _presetModalCancelActiveOperation({ restore: true });
     $('status-stats').textContent = 'Preset operation canceled.';

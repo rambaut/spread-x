@@ -1,5 +1,9 @@
 /* spread-x.css — SPREAD-X app-specific styles. */
 
+:root {
+  --sx-layer-panel-width: 220px;
+}
+
 /* ══════════════════════════════════════════════════════════════════════
    Side panels (left = layers, right = settings)
    ══════════════════════════════════════════════════════════════════════ */
@@ -22,7 +26,7 @@
 /* ── Left panel (layers) ───────────────────────────────────────────── */
 
 .sx-panel-left {
-  left: 0; width: 220px;
+  left: 0; width: var(--sx-layer-panel-width, 220px);
   border-right: 1px solid var(--pt-divider);
   transform: translateX(-100%);
 }
@@ -45,8 +49,44 @@
 
 /* ── Body margin when panels are pinned ────────────────────────────── */
 
-.layers-pinned #canvas-container   { margin-left:  220px; }
+.layers-pinned #canvas-container   { margin-left: var(--sx-layer-panel-width, 220px); }
 .settings-pinned #canvas-container { margin-right: 260px; }
+
+/* ── Side panel drag bars ──────────────────────────────────────────── */
+
+.sx-panel-dragbar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  z-index: 2;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.sx-panel-dragbar-right {
+  right: -4px;
+}
+
+.sx-panel-left:not(.open):not(.pinned) .sx-panel-dragbar {
+  display: none;
+}
+
+.sx-panel-dragbar:hover {
+  background: var(--pt-resize-hover, rgba(42, 161, 152, 0.3));
+}
+
+#pt-panel-resize-ghost {
+  position: fixed;
+  top: var(--pt-toolbar-h, 0px);
+  bottom: var(--pt-statusbar-h, 28px);
+  width: 2px;
+  background: var(--pt-resize-hover, rgba(42, 161, 152, 0.3));
+  display: none;
+  pointer-events: none;
+  z-index: 1200;
+}
 
 /* ── Panel body ────────────────────────────────────────────────────── */
 

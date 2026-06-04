@@ -41,6 +41,7 @@ function _buildLayerPanel() {
     pinButtonId: 'btn-palette-pin-left',
     closeButtonId: 'btn-palette-close-left',
   })}
+  <div id="layer-panel-dragbar" class="sx-panel-dragbar sx-panel-dragbar-right" title="Resize layers panel"></div>
   <div id="palette-panel-body-left" class="sx-panel-body" style="display:flex;flex-direction:column">
     <div class="sx-layer-add-row">
       <button id="btn-add-toolbar" class="btn btn-sm btn-outline-primary" title="Add layer">
@@ -594,12 +595,24 @@ function _buildAppModals() {
           <span id="preset-instance-description" class="sx-setting-value"></span>
         </div>
         <hr class="my-2" />
-        <h3 class="sx-modal-subheading">Feature layers</h3>
+        <div class="d-flex align-items-center justify-content-between mb-1">
+          <h3 class="sx-modal-subheading mb-0">Feature layers</h3>
+          <div class="btn-group btn-group-sm" role="group" aria-label="Feature selection controls">
+            <button type="button" class="btn btn-outline-secondary" id="btn-preset-features-all-on">All on</button>
+            <button type="button" class="btn btn-outline-secondary" id="btn-preset-features-all-off">All off</button>
+          </div>
+        </div>
         <div class="preset-feature-scroll">
           <div id="preset-feature-list" class="preset-feature-list"></div>
         </div>
         <hr class="my-2" />
-        <h3 class="sx-modal-subheading">Detail levels</h3>
+        <div class="d-flex align-items-center justify-content-between mb-1">
+          <h3 class="sx-modal-subheading mb-0">Detail levels</h3>
+          <div class="btn-group btn-group-sm" role="group" aria-label="Detail level selection controls">
+            <button type="button" class="btn btn-outline-secondary" id="btn-preset-details-all-on">All on</button>
+            <button type="button" class="btn btn-outline-secondary" id="btn-preset-details-all-off">All off</button>
+          </div>
+        </div>
         <div class="table-responsive preset-detail-scroll">
           <table class="table table-sm sx-preset-detail-table align-middle mb-0">
             <thead>

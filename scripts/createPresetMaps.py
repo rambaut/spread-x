@@ -65,6 +65,8 @@ FEATURE_META = {
     },
 }
 
+MAPSHAPER_CMD: list[str] | None = None
+
 
 def parse_csv_list(value: str) -> list[str]:
     if not value:
@@ -143,9 +145,21 @@ def run_command(args: list[str]) -> None:
 
 
 def ensure_mapshaper_available() -> None:
-    if shutil.which("mapshaper"):
+    global MAPSHAPER_CMD
+    if MAPSHAPER_CMD is not None:
         return
-    raise RuntimeError("mapshaper is not installed. Install with: npm i -g mapshaper")
+    if shutil.which("mapshaper"):
+        MAPSHAPER_CMD = ["mapshaper"]
+        return
+    if shutil.which("npx"):
+        MAPSHAPER_CMD = ["npx", "--yes", "mapshaper"]
+        return
+    raise RuntimeError("mapshaper is not installed. Install with: npm i -g mapshaper, or ensure npx is available")
+
+
+def mapshaper_args(*args: str) -> list[str]:
+    ensure_mapshaper_available()
+    return [*(MAPSHAPER_CMD or ["mapshaper"]), *args]
 
 
 def find_license_file(input_folder: Path) -> Path:
@@ -182,18 +196,15 @@ def build_individual_topologies(src_dir: Path, out_dir: Path, features: list[str
             continue
 
         print(f"Building {out_file} from {src_file}")
-        run_command(
-            [
-                "mapshaper",
-                str(src_file),
-                "-clean",
-                "-snap",
-                "interval=1e-7",
-                "-o",
-                "format=topojson",
-                str(out_file),
-            ]
-        )
+        run_command(mapshaper_args(
+            str(src_file),
+            "-clean",
+            "-snap",
+            "interval=1e-7",
+            "-o",
+            "format=topojson",
+            str(out_file),
+        ))
         built.append(feature)
 
     return built
@@ -202,17 +213,14 @@ def build_individual_topologies(src_dir: Path, out_dir: Path, features: list[str
 def create_land_geojson(src_admin0: Path, tmp_dir: Path) -> Path:
     land_geojson = tmp_dir / "land.geojson"
     print("Building land polygons from admin0 arcs")
-    run_command(
-        [
-            "mapshaper",
-            str(src_admin0),
-            "-clean",
-            "-dissolve2",
-            "-o",
-            "format=geojson",
-            str(land_geojson),
-        ]
-    )
+    run_command(mapshaper_args(
+        str(src_admin0),
+        "-clean",
+        "-dissolve2",
+        "-o",
+        "format=geojson",
+        str(land_geojson),
+    ))
     return land_geojson
 
 
@@ -220,18 +228,15 @@ def build_land_topology(src_admin0: Path, tmp_dir: Path, out_dir: Path) -> None:
     land_geojson = create_land_geojson(src_admin0, tmp_dir)
     land_topology = out_dir / "land.topo.json"
     print(f"Building {land_topology} from {land_geojson}")
-    run_command(
-        [
-            "mapshaper",
-            str(land_geojson),
-            "-clean",
-            "-snap",
-            "interval=1e-7",
-            "-o",
-            "format=topojson",
-            str(land_topology),
-        ]
-    )
+    run_command(mapshaper_args(
+        str(land_geojson),
+        "-clean",
+        "-snap",
+        "interval=1e-7",
+        "-o",
+        "format=topojson",
+        str(land_topology),
+    ))
 
 
 def build_layout_topology(
@@ -245,64 +250,26 @@ def build_layout_topology(
     layout_file = layout_out_dir / "layout-topo.json"
 
     print("Building shared layout topology (countries, land)")
-    run_command(
-        [
-            "mapshaper",
-            "combine-files",
-            str(src_admin0),
-            "name=countries",
-            str(land_geojson),
-            "name=land",
-            "-clean",
-            "rewind",
-            "-snap",
-            "interval=1e-7",
-            "-rename-layers",
-            "countries,land",
-            "-o",
-            "format=topojson",
-            str(layout_base),
-        ]
-    )
+    run_command(mapshaper_args(
+        "combine-files",
+        str(src_admin0),
+        "name=countries",
+        str(land_geojson),
+        "name=land",
+        "-clean",
+        "rewind",
+        "-snap",
+        "interval=1e-7",
+        "-rename-layers",
+        "countries,land",
+        "-o",
+        "format=topojson",
+        str(layout_base),
+    ))
 
     if layout_level == 0:
         shutil.copy2(layout_base, layout_file)
-        run_command(
-            [
-                "mapshaper",
-                str(layout_file),
-                "-clean",
-                "rewind",
-                "-o",
-                "format=topojson",
-                "force",
-                str(layout_file),
-            ]
-        )
-        print(f"Wrote {layout_file} at level 0")
-        return
-
-    keep_pct = KEEP_PCTS[layout_level]
-    print(f"Simplifying layout topology to level {layout_level} (keep {keep_pct}%)")
-    run_command(
-        [
-            "mapshaper",
-            str(layout_base),
-            "-simplify",
-            "visvalingam",
-            "weighted",
-            f"{keep_pct}%",
-            "keep-shapes",
-            "-o",
-            "format=topojson",
-            str(layout_file),
-        ]
-    )
-
-    # Rewind polygon rings after simplify to avoid complement-style land fill.
-    run_command(
-        [
-            "mapshaper",
+        run_command(mapshaper_args(
             str(layout_file),
             "-clean",
             "rewind",
@@ -310,8 +277,34 @@ def build_layout_topology(
             "format=topojson",
             "force",
             str(layout_file),
-        ]
-    )
+        ))
+        print(f"Wrote {layout_file} at level 0")
+        return
+
+    keep_pct = KEEP_PCTS[layout_level]
+    print(f"Simplifying layout topology to level {layout_level} (keep {keep_pct}%)")
+    run_command(mapshaper_args(
+        str(layout_base),
+        "-simplify",
+        "visvalingam",
+        "weighted",
+        f"{keep_pct}%",
+        "keep-shapes",
+        "-o",
+        "format=topojson",
+        str(layout_file),
+    ))
+
+    # Rewind polygon rings after simplify to avoid complement-style land fill.
+    run_command(mapshaper_args(
+        str(layout_file),
+        "-clean",
+        "rewind",
+        "-o",
+        "format=topojson",
+        "force",
+        str(layout_file),
+    ))
 
 
 def build_combined_base(
@@ -321,7 +314,7 @@ def build_combined_base(
     features: list[str],
 ) -> tuple[Path, list[str]]:
     layer_names: list[str] = []
-    combine_args: list[str] = ["mapshaper", "combine-files"]
+    combine_args: list[str] = mapshaper_args("combine-files")
 
     for feature in features:
         src_file = src_dir / f"{feature}.geojson"
@@ -368,20 +361,17 @@ def build_pyramid_levels(base_file: Path, out_dir: Path, levels: list[int]) -> l
         else:
             keep_pct = KEEP_PCTS[level]
             print(f"Building simplify level {level} (keep {keep_pct}%)")
-            run_command(
-                [
-                    "mapshaper",
-                    str(base_file),
-                    "-simplify",
-                    "visvalingam",
-                    "weighted",
-                    f"{keep_pct}%",
-                    "keep-shapes",
-                    "-o",
-                    "format=topojson",
-                    str(out_file),
-                ]
-            )
+            run_command(mapshaper_args(
+                str(base_file),
+                "-simplify",
+                "visvalingam",
+                "weighted",
+                f"{keep_pct}%",
+                "keep-shapes",
+                "-o",
+                "format=topojson",
+                str(out_file),
+            ))
 
         level_entries.append({"level": level, "file": out_file.name})
 

@@ -41,8 +41,9 @@ export async function loadPresetManifest({ fetchImpl, folder, basePath = 'data/m
 
 export async function loadPresetTopologySource({ fetchImpl, manifest, basePath = 'data/maps', levels = [], existingSource = null } = {}) {
   const fetchFn = fetchImpl || fetch;
+  const folder = String(manifest?.catalogFolder || manifest?.folder || '').trim();
   const entries = Array.isArray(manifest?.levels) ? manifest.levels : [];
-  if (!entries.length) return null;
+  if (!entries.length || !folder) return null;
 
   const requestedLevels = new Set(Array.isArray(levels) ? levels
     .map(level => _toNumber(level, NaN))
@@ -66,7 +67,7 @@ export async function loadPresetTopologySource({ fetchImpl, manifest, basePath =
     if (topologiesByLevel.has(level)) continue;
 
     try {
-      const response = await fetchFn(`${basePath}/${manifest.folder}/${file}`);
+      const response = await fetchFn(`${basePath}/${folder}/${file}`);
       if (!response.ok) continue;
       const topology = await response.json();
       if (topology?.type === 'Topology') {
@@ -175,7 +176,7 @@ export function buildPresetFeatureLayers({
     layer.style.presetFeatureLabel = layerName;
     layer.style.presetColor = presetColor;
     layer.style.presetLicense = manifest.license?.name || manifest.license || '';
-    layer.style.presetFolder = manifest.folder || '';
+    layer.style.presetFolder = manifest.catalogFolder || manifest.folder || '';
     layer.style.presetDescription = manifest.description || '';
     layer.style.presetLogo = manifest.logo || '';
     layers.push(layer);
